@@ -156,4 +156,57 @@ class NotificationParserTest {
         val n = parse("80 m • Gira a la izquierda en", "9,0 km • 24 min • 18:45")
         assertEquals("Gira a la izquierda", n.instruction)
     }
+
+    // ------------------------------------------------------------ Google Maps real (registro)
+
+    @Test
+    fun mapsReal_distanceInTitle_onlyArrivalInSub() {
+        val n = parse(
+            "60 m · En la rotonda, toma la primera salida en dirección Avinguda del Paral·lel",
+            null,
+            sub = "Llegada: 21:20",
+        )
+        assertEquals("60 m", n.maneuverDistance)
+        assertEquals("En la rotonda, toma la primera salida en dirección Avinguda del Paral·lel", n.instruction)
+        assertEquals("21:20", n.eta)
+        assertEquals("", n.duration)
+        assertEquals("", n.distance)
+    }
+
+    @Test
+    fun mapsReal_duringManeuver_noDistance() {
+        val n = parse("Sal de la rotonda en Avinguda del Paral·lel", null, sub = "Llegada: 21:19")
+        assertTrue(n.active)
+        assertEquals("", n.maneuverDistance)
+        assertEquals("Sal de la rotonda en Avinguda del Paral·lel", n.instruction)
+        assertEquals("21:19", n.eta)
+    }
+
+    @Test
+    fun mapsReal_kilometresAndLongInstruction() {
+        val n = parse(
+            "2,2 km · En Pl. d'Espanya, toma la cuarta salida hacia Gran Via de les Corts Catalanes/C-31",
+            null,
+            sub = "Llegada: 21:19",
+        )
+        assertEquals("2,2 km", n.maneuverDistance)
+        assertEquals("En Pl. d'Espanya, toma la cuarta salida hacia Gran Via de les Corts Catalanes/C-31", n.instruction)
+        assertEquals("21:19", n.eta)
+    }
+
+    @Test
+    fun osmandRealLog_streetComesInBigText() {
+        // Registro real de OsmAnd+: sin "texto"; la calle y el resumen van en el texto largo.
+        val n = NotificationParser.parse(
+            NotificationParser.NotificationTexts(
+                title = "80 m • Gira a la izquierda en",
+                bigText = "Gira a la izquierda en Carrer de Sagunt 150 m\n500 m • 4 min • 19:04",
+            )
+        )
+        assertEquals("80 m", n.maneuverDistance)
+        assertEquals("Gira a la izquierda en Carrer de Sagunt", n.instruction)
+        assertEquals("500 m", n.distance)
+        assertEquals("4 min", n.duration)
+        assertEquals("19:04", n.eta)
+    }
 }

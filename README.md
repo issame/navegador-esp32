@@ -21,7 +21,10 @@ Android propia por Bluetooth LE.
   - arriba, hora de llegada y tiempo y distancia restantes ("Llegada 14:51", "19 min · 8,4 km");
   - en el centro, la flecha de la maniobra tal como la dibuja la app de navegación;
   - debajo, la distancia a la maniobra en grande;
-  - abajo, la indicación (como mucho 2 líneas, dentro de la parte visible del círculo).
+  - abajo, la indicación (como mucho 2 líneas, dentro de la parte visible del círculo);
+    sin distancia a la maniobra, la indicación sube a su hueco y puede ocupar 4 líneas.
+- **Flechas de la app de navegación**: se muestran tal cual (en blanco y negro) y se
+  conservan hasta que llega otra o termina la ruta; la placa no dibuja flechas propias.
 - **Arco de progreso** en el borde que se va completando al acercarse a la maniobra.
 - **Aviso de maniobra inminente**: a 100 m o menos, el arco se vuelve naranja y parpadea,
   y la distancia se pinta en naranja.
@@ -39,6 +42,11 @@ Android propia por Bluetooth LE.
 - **Lectura de la navegación** de la notificación de **Google Maps**, **OsmAnd+** (también
   OsmAnd~ de F-Droid) y **OsmAnd**: distancia a la maniobra, indicación, tiempo y distancia restantes, hora de
   llegada y flecha de la maniobra.
+- **Indicaciones abreviadas** para que quepan sin perder la calle:
+  "En la rotonda, toma la primera salida en dirección Avinguda del Paral·lel" → "1.ª salida · Av. Paral·lel",
+  "Gira a la izquierda en Carrer de Sagunt" → "Izq. · C/ Sagunt". Acciones (Izq., Dch., Lig. izq.,
+  Recto, Salida 5, Cambio de sentido…), tipos de vía en castellano y catalán (Av., C/, Pl., Pg.,
+  Ctra., Rda., Trav., Rbla., Cam., Gta.) y sin "de", "del", "d'"… detrás.
 - **Envío eficiente**: solo manda datos cuando cambian, y la flecha solo cuando es otra.
 - **Funciona en segundo plano** con una notificación fija que indica el estado de la conexión.
 - **Ahorro de batería**: avisa si Android puede cerrar la app y lleva al ajuste para evitarlo.
@@ -148,6 +156,7 @@ Al abrirla por primera vez:
 |---|---|
 | `NavigationListener.kt` | Lee la notificación de navegación de Maps u OsmAnd |
 | `NotificationParser.kt` | Saca distancia, indicación, tiempo, distancia restante y llegada de sus textos |
+| `InstructionShortener.kt` | Acorta y abrevia las indicaciones para la pantalla |
 | `IconConverter.kt`, `IconBits.kt` | Convierten la flecha a 48×48 a 1 bit |
 | `Protocol.kt` | Construye y trocea los paquetes BLE de hora y navegación |
 | `FirmwareUpdateProtocol.kt` | Órdenes, comprobaciones y estados de la actualización del firmware |

@@ -243,7 +243,8 @@ class MainActivity : AppCompatActivity() {
                 NavInfo(
                     active = true,
                     maneuverDistance = "250 m",
-                    instruction = "Gira a la izquierda hacia la Plaça de l'Àngel (Peña, ¿sí? ¡ç!)",
+                    // Pasa por el abreviador igual que una ruta real: "Izq. · Pl. Àngel (Peña, ¿sí? ¡ç!)".
+                    instruction = InstructionShortener.shorten("Gira a la izquierda hacia la Plaça de l'Àngel (Peña, ¿sí? ¡ç!)"),
                     duration = "19 min",
                     distance = "8,4 km",
                     eta = "14:51",

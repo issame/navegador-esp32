@@ -29,6 +29,8 @@
 // ------------------------------------------------------------------ flecha
 
 // La flecha llega a 48x48 y se amplía a 72x72 (x1,5) para verla bien de un vistazo.
+// Solo se muestran las flechas que manda la app de navegación: la última se conserva
+// hasta que llega otra o termina la ruta.
 #define LADO_FLECHA_RECIBIDA 48
 #define LADO_FLECHA_EN_PANTALLA 72
 
@@ -68,6 +70,21 @@ static bool horaSincronizadaPintada = false;
 static int horaPintada = -1, minutoPintado = -1, diaPintado = -1;
 
 // ------------------------------------------------------------------ ayudas
+
+// Con distancia a la maniobra, la indicación va debajo de ella y tiene 2 líneas. Sin
+// distancia, sube a su hueco y tiene hasta 4 líneas. La flecha no se mueve nunca.
+#define ANCHO_INDICACION 176
+#define ALTURA_LINEA 20
+#define Y_INDICACION_CON_DISTANCIA 178
+#define Y_INDICACION_SIN_DISTANCIA 150
+
+static void colocarIndicacion(bool hayDistancia)
+{
+  int lineas = hayDistancia ? 2 : 4;
+  lv_obj_set_height(etiquetaIndicacion, lineas * ALTURA_LINEA + 2);
+  lv_obj_align(etiquetaIndicacion, LV_ALIGN_TOP_MID, 0,
+               hayDistancia ? Y_INDICACION_CON_DISTANCIA : Y_INDICACION_SIN_DISTANCIA);
+}
 
 static lv_obj_t *crearPantallaVacia()
 {
@@ -135,13 +152,12 @@ static void crearPantallaNavegacion()
   etiquetaDistanciaManiobra = crearEtiqueta(pantallaNavegacion, &fuente_es_28, COLOR_TEXTO);
   lv_obj_align(etiquetaDistanciaManiobra, LV_ALIGN_TOP_MID, 0, 144);
 
-  // Indicación: 176 px de ancho y como mucho 2 líneas (con "…" si no cabe) para que
-  // no se corte por los bordes del círculo.
+  // Indicación: 176 px de ancho (con "…" si no cabe) para que no se corte por los bordes
+  // del círculo. Su posición y altura dependen de si hay distancia (colocarIndicacion).
   etiquetaIndicacion = crearEtiqueta(pantallaNavegacion, &fuente_es_16, COLOR_TEXTO);
-  lv_obj_set_width(etiquetaIndicacion, 176);
-  lv_obj_set_height(etiquetaIndicacion, 42);
+  lv_obj_set_width(etiquetaIndicacion, ANCHO_INDICACION);
   lv_label_set_long_mode(etiquetaIndicacion, LV_LABEL_LONG_DOT);
-  lv_obj_align(etiquetaIndicacion, LV_ALIGN_TOP_MID, 0, 178);
+  colocarIndicacion(true);
 
   // Borde: arco que se completa al acercarse a la maniobra. Empieza arriba (270°) y
   // avanza en el sentido de las agujas del reloj. Solo se muestra, no se puede tocar.
@@ -233,7 +249,7 @@ void ui_volver_al_reloj()
 
 void ui_mostrar_navegacion(const String &distanciaManiobra, const String &indicacion,
                            const String &horaLlegada, const String &tiempoRestante,
-                           const String &distanciaRestante, bool hayFlecha)
+                           const String &distanciaRestante)
 {
   // "Llegada 14:51". Si el texto ya trae la palabra "Llegada" se deja tal cual.
   String textoLlegada = horaLlegada;
@@ -255,10 +271,10 @@ void ui_mostrar_navegacion(const String &distanciaManiobra, const String &indica
 
   lv_label_set_text(etiquetaDistanciaManiobra, distanciaManiobra.c_str());
   lv_label_set_text(etiquetaIndicacion, indicacion.c_str());
+  colocarIndicacion(distanciaManiobra.length() > 0);
 
-  // La flecha se muestra cuando llega (ui_mostrar_flecha); aquí solo se oculta si no hay.
-  if (!hayFlecha)
-    lv_obj_add_flag(lienzoFlecha, LV_OBJ_FLAG_HIDDEN);
+  // La flecha no se toca aquí: se pinta cuando llega una nueva (ui_mostrar_flecha) y se
+  // conserva aunque esta actualización no traiga flecha.
 
   if (lv_screen_active() != pantallaNavegacion)
     lv_screen_load_anim(pantallaNavegacion, LV_SCR_LOAD_ANIM_FADE_IN, 300, 0, false);

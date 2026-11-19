@@ -9,7 +9,8 @@ package es.navegador.esp32
  *  - **distancia a la maniobra**: al principio de un texto ("250 m", "En 1,2 km, gira…")
  *    o al final con "en"/"in" delante ("Gira a la derecha en 300 m").
  *  - **línea resumen**: contiene la hora de llegada y/o tiempo y distancia restantes
- *    ("19 min · 8,4 km · 14:51").
+ *    ("19 min · 8,4 km · 14:51"). Google Maps a veces solo pone la llegada
+ *    ("Llegada: 21:20"), en una línea corta aparte del título.
  *  - **indicación**: el resto del título y del texto ("Gira a la izquierda hacia…").
  *  - **calle de la maniobra**: OsmAnd pone en el título "80 m • Gira a la izquierda en"
  *    (sin calle, si no cabe) y en el texto "Gira a la izquierda en Carrer de Sagunt 150 m":
@@ -81,6 +82,9 @@ object NotificationParser {
     /** Distancia al final de una línea, sin preposición delante ("…Carrer de Sagunt 150 m"). */
     private val TRAILING_DISTANCE = Regex("\\s*$NUMBER\\s?$DISTANCE_UNIT[.\\s]*$", RegexOption.IGNORE_CASE)
 
+    /** Una línea corta con una hora y poco más es la hora de llegada ("Llegada: 21:20"). */
+    private const val MAX_ARRIVAL_ONLY_LINE_LENGTH = 30
+
     /** Caracteres que separan la distancia de la indicación ("300 m · Gira…"). */
     private val SEPARATORS = setOf('·', '-', '–', '—', ',', ':', '•', ' ')
 
@@ -92,19 +96,36 @@ object NotificationParser {
     private fun lines(raw: String?): List<String> =
         raw?.split('\n')?.map(::clean)?.filter { it.isNotEmpty() }.orEmpty()
 
+    /**
+     * Si [line] repite la última parte de la indicación y la alarga (con la calle), la
+     * sustituye, sin la distancia del final. Ejemplo: "Gira a la izquierda en" +
+     * "Gira a la izquierda en Carrer de Sagunt 150 m" → "Gira a la izquierda en Carrer de Sagunt".
+     */
+    private fun completeWithStreet(line: String, instructionParts: MutableList<String>) {
+        val current = instructionParts.lastOrNull() ?: return
+        val withoutDistance = line.replace(TRAILING_DISTANCE, "").trim { it in SEPARATORS }
+        if (withoutDistance.length > current.length && withoutDistance.startsWith(current, ignoreCase = true)) {
+            instructionParts[instructionParts.lastIndex] = withoutDistance
+        }
+    }
+
     fun parse(texts: NotificationTexts): NavInfo {
         val mainLines = (lines(texts.title) + lines(texts.text)).distinct()
         val otherLines = (lines(texts.subText) + lines(texts.bigText) + lines(texts.infoText) +
             texts.extra.flatMap(::lines)).filter { it !in mainLines }.distinct()
         val allLines = mainLines + otherLines
 
-        // 1. Línea resumen: la que tiene hora de llegada junto con tiempo o distancia,
-        //    o, si no la hay, la que tiene tiempo y distancia sin ser una maniobra.
+        // 1. Línea resumen, por orden de preferencia:
+        //    - hora de llegada junto con tiempo o distancia ("19 min · 8,4 km · 14:51");
+        //    - tiempo y distancia sin ser una maniobra ("19 min · 8,4 km");
+        //    - solo la hora de llegada, en una línea corta que no sea el título ("Llegada: 21:20").
         val summaryLine = allLines.firstOrNull {
             CLOCK_TIME.containsMatchIn(it) && (DURATION.containsMatchIn(it) || ANY_DISTANCE.containsMatchIn(it))
         } ?: allLines.firstOrNull {
             DURATION.containsMatchIn(it) && ANY_DISTANCE.containsMatchIn(it) &&
                 !MANEUVER_DISTANCE_AT_START.containsMatchIn(it) && !MANEUVER_DISTANCE_AT_END.containsMatchIn(it)
+        } ?: allLines.firstOrNull {
+            it !in lines(texts.title) && CLOCK_TIME.containsMatchIn(it) && it.length <= MAX_ARRIVAL_ONLY_LINE_LENGTH
         }
 
         val duration = summaryLine?.let { DURATION.find(it)?.value }.orEmpty()
@@ -135,16 +156,9 @@ object NotificationParser {
                         continue
                     }
                 } else if (ANY_DISTANCE.containsMatchIn(candidate)) {
-                    // Línea con su propia distancia, como la de OsmAnd con la calle. Si repite
-                    // la indicación actual y la alarga, la sustituye; si no, es otra cosa y se
-                    // descarta para no mezclarla con la maniobra actual.
-                    val withoutDistance = candidate.replace(TRAILING_DISTANCE, "").trim { it in SEPARATORS }
-                    val current = instructionParts.lastOrNull()
-                    if (current != null && withoutDistance.length > current.length &&
-                        withoutDistance.startsWith(current, ignoreCase = true)
-                    ) {
-                        instructionParts[instructionParts.lastIndex] = withoutDistance
-                    }
+                    // Línea con su propia distancia: o completa la indicación con la calle,
+                    // o es otra cosa y se descarta para no mezclarla con la maniobra actual.
+                    completeWithStreet(candidate, instructionParts)
                     continue
                 }
                 if (candidate != maneuverDistance) instructionParts += candidate
@@ -152,8 +166,16 @@ object NotificationParser {
         }
         collectFrom(mainLines)
 
-        // 3. Si el título y el texto no traían nada, se usan los demás textos.
-        if (instructionParts.isEmpty() && maneuverDistance.isEmpty()) collectFrom(otherLines)
+        // 3. Si el título y el texto no traían nada, se usan los demás textos. Si sí traían
+        //    la maniobra, en los demás textos solo se busca la calle: OsmAnd la pone en el
+        //    texto largo ("Gira a la izquierda en Carrer de Sagunt 150 m").
+        if (instructionParts.isEmpty() && maneuverDistance.isEmpty()) {
+            collectFrom(otherLines)
+        } else {
+            otherLines
+                .filter { it != summaryLine && ANY_DISTANCE.containsMatchIn(it) }
+                .forEach { completeWithStreet(it, instructionParts) }
+        }
 
         val instruction = instructionParts
             .map { it.replace(TRAILING_PREPOSITION, "") }

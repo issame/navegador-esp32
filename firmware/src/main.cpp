@@ -185,7 +185,7 @@ static void mostrarNavegacionRecibida()
   Serial.printf("Navegación: %s | %s | %s %s %s\n", distanciaManiobra.c_str(), indicacion.c_str(),
                 navegacion.eta.c_str(), navegacion.duration.c_str(), navegacion.distance.c_str());
   ui_mostrar_navegacion(distanciaManiobra, indicacion, navegacion.eta, navegacion.duration,
-                        navegacion.distance, navegacion.hasIcon);
+                        navegacion.distance);
   actualizarProgresoManiobra(distanciaManiobra, indicacion);
 }
 
