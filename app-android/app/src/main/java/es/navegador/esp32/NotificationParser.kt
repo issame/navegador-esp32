@@ -2,7 +2,7 @@ package es.navegador.esp32
 
 /**
  * Extrae los datos de navegación de los textos de la notificación de una app de
- * navegación (Google Maps, Waze, OsmAnd).
+ * navegación (Google Maps, OsmAnd).
  *
  * El formato cambia según la app, su versión y el idioma, así que no se depende de
  * posiciones fijas sino de patrones:
@@ -11,6 +11,9 @@ package es.navegador.esp32
  *  - **línea resumen**: contiene la hora de llegada y/o tiempo y distancia restantes
  *    ("19 min · 8,4 km · 14:51").
  *  - **indicación**: el resto del título y del texto ("Gira a la izquierda hacia…").
+ *  - **maniobra siguiente**: otra línea con su propia distancia (OsmAnd muestra
+ *    "Gira a la izquierda en Carrer de Sagunt 150 m" para la maniobra de después);
+ *    se descarta para no mezclarla con la actual.
  *
  * No depende de Android para poder probarla con tests normales (ver NotificationParserTest).
  */
@@ -67,6 +70,13 @@ object NotificationParser {
     /** Hora: "14:51" o "2:51 p. m.". */
     private val CLOCK_TIME = Regex("\\d{1,2}:\\d{2}(?:\\s?[ap]\\.?\\s?m\\.?)?", RegexOption.IGNORE_CASE)
 
+    /**
+     * Preposición suelta al final, que queda cuando la app no conoce la calle
+     * (OsmAnd: "Gira a la izquierda en").
+     */
+    private val TRAILING_PREPOSITION =
+        Regex("\\s+(?:en|a|hacia|por|in|on|onto|to|at)$", RegexOption.IGNORE_CASE)
+
     /** Caracteres que separan la distancia de la indicación ("300 m · Gira…"). */
     private val SEPARATORS = setOf('·', '-', '–', '—', ',', ':', '•', ' ')
 
@@ -74,18 +84,21 @@ object NotificationParser {
     fun clean(raw: String?): String =
         raw?.replace(SPECIAL_SPACES, " ")?.replace(REPEATED_WHITESPACE, " ")?.trim() ?: ""
 
+    /** Divide un texto en líneas limpias (OsmAnd pone la indicación y el resumen en líneas distintas). */
+    private fun lines(raw: String?): List<String> =
+        raw?.split('\n')?.map(::clean)?.filter { it.isNotEmpty() }.orEmpty()
+
     fun parse(texts: NotificationTexts): NavInfo {
-        val title = clean(texts.title)
-        val text = clean(texts.text)
-        val otherTexts = (listOf(clean(texts.subText), clean(texts.bigText), clean(texts.infoText)) +
-            texts.extra.map(::clean)).filter { it.isNotEmpty() }
-        val allTexts = (listOf(title, text) + otherTexts).filter { it.isNotEmpty() }.distinct()
+        val mainLines = (lines(texts.title) + lines(texts.text)).distinct()
+        val otherLines = (lines(texts.subText) + lines(texts.bigText) + lines(texts.infoText) +
+            texts.extra.flatMap(::lines)).filter { it !in mainLines }.distinct()
+        val allLines = mainLines + otherLines
 
         // 1. Línea resumen: la que tiene hora de llegada junto con tiempo o distancia,
         //    o, si no la hay, la que tiene tiempo y distancia sin ser una maniobra.
-        val summaryLine = allTexts.firstOrNull {
+        val summaryLine = allLines.firstOrNull {
             CLOCK_TIME.containsMatchIn(it) && (DURATION.containsMatchIn(it) || ANY_DISTANCE.containsMatchIn(it))
-        } ?: allTexts.firstOrNull {
+        } ?: allLines.firstOrNull {
             DURATION.containsMatchIn(it) && ANY_DISTANCE.containsMatchIn(it) &&
                 !MANEUVER_DISTANCE_AT_START.containsMatchIn(it) && !MANEUVER_DISTANCE_AT_END.containsMatchIn(it)
         }
@@ -117,16 +130,22 @@ object NotificationParser {
                         if (rest.isNotEmpty()) instructionParts += rest
                         continue
                     }
+                } else if (ANY_DISTANCE.containsMatchIn(candidate)) {
+                    continue // otra línea con su propia distancia: es la maniobra siguiente
                 }
                 if (candidate != maneuverDistance) instructionParts += candidate
             }
         }
-        collectFrom(listOf(title, text).filter { it.isNotEmpty() })
+        collectFrom(mainLines)
 
         // 3. Si el título y el texto no traían nada, se usan los demás textos.
-        if (instructionParts.isEmpty() && maneuverDistance.isEmpty()) collectFrom(otherTexts)
+        if (instructionParts.isEmpty() && maneuverDistance.isEmpty()) collectFrom(otherLines)
 
-        val instruction = instructionParts.distinct().joinToString("\n")
+        val instruction = instructionParts
+            .map { it.replace(TRAILING_PREPOSITION, "") }
+            .filter { it.isNotEmpty() }
+            .distinct()
+            .joinToString("\n")
         return NavInfo(
             active = maneuverDistance.isNotEmpty() || instruction.isNotEmpty(),
             maneuverDistance = maneuverDistance,

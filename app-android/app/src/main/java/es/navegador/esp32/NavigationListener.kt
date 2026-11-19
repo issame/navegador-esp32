@@ -29,9 +29,10 @@ class NavigationListener : NotificationListenerService() {
     )
 
     companion object {
+        // Waze no se incluye: su notificación solo indica que está en marcha, sin indicaciones.
+        // "net.osmand.plus" es también el paquete de OsmAnd~ (la versión de F-Droid).
         private val SUPPORTED_APPS = mapOf(
             "com.google.android.apps.maps" to NavigationApp("Maps"),
-            "com.waze" to NavigationApp("Waze"),
             "net.osmand.plus" to NavigationApp("OsmAnd+", arrowInSmallIcon = true),
             "net.osmand" to NavigationApp("OsmAnd", arrowInSmallIcon = true),
         )
@@ -105,8 +106,7 @@ class NavigationListener : NotificationListenerService() {
             Hub.log(description)
         }
 
-        // Otras notificaciones fijas (p. ej. "Compartiendo ubicación" o "Waze está en
-        // marcha") no traen distancia de maniobra: así se distinguen de la de navegación.
+        // Otras notificaciones fijas (p. ej. "Compartiendo ubicación") no traen distancia de maniobra: así se distinguen de la de navegación.
         val isNavigation = if (isNavigationCategory) navigation.active else navigation.maneuverDistance.isNotEmpty()
         if (!isNavigation) return
 

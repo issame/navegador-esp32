@@ -1,6 +1,6 @@
 # Navegador ESP32
 
-Reloj e indicaciones de navegación (Google Maps, Waze y OsmAnd) en una placa
+Reloj e indicaciones de navegación (Google Maps y OsmAnd) en una placa
 **ESP32-C3 con pantalla redonda de 1,28" (GC9A01, 240×240)**, controlada desde una app
 Android propia por Bluetooth LE.
 
@@ -36,8 +36,8 @@ Android propia por Bluetooth LE.
   y se **reconecta sola** cuando la pierde.
 - **Envío de la hora** al conectar, cada hora y cuando cambia la hora del móvil (por ejemplo,
   en el cambio de horario).
-- **Lectura de la navegación** de la notificación de **Google Maps**, **Waze**, **OsmAnd+**
-  y **OsmAnd**: distancia a la maniobra, indicación, tiempo y distancia restantes, hora de
+- **Lectura de la navegación** de la notificación de **Google Maps**, **OsmAnd+** (también
+  OsmAnd~ de F-Droid) y **OsmAnd**: distancia a la maniobra, indicación, tiempo y distancia restantes, hora de
   llegada y flecha de la maniobra.
 - **Envío eficiente**: solo manda datos cuando cambian, y la flecha solo cuando es otra.
 - **Funciona en segundo plano** con una notificación fija que indica el estado de la conexión.
@@ -146,7 +146,7 @@ Al abrirla por primera vez:
 
 | Archivo | Qué hace |
 |---|---|
-| `NavigationListener.kt` | Lee la notificación de navegación de Maps, Waze u OsmAnd |
+| `NavigationListener.kt` | Lee la notificación de navegación de Maps u OsmAnd |
 | `NotificationParser.kt` | Saca distancia, indicación, tiempo, distancia restante y llegada de sus textos |
 | `IconConverter.kt`, `IconBits.kt` | Convierten la flecha a 48×48 a 1 bit |
 | `Protocol.kt` | Construye y trocea los paquetes BLE de hora y navegación |

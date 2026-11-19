@@ -74,10 +74,10 @@ class NotificationParserTest {
         assertEquals("18:20", n.eta)
     }
 
-    // ------------------------------------------------------------ Waze y OsmAnd
+    // ------------------------------------------------------------ OsmAnd y otros formatos
 
     @Test
-    fun distanceAtEndOfInstruction_wazeStyle() {
+    fun distanceAtEndOfInstruction() {
         val n = parse("Gira a la derecha en 300 m", "Calle Mayor")
         assertEquals("300 m", n.maneuverDistance)
         assertEquals("Gira a la derecha\nCalle Mayor", n.instruction)
@@ -100,8 +100,44 @@ class NotificationParserTest {
     }
 
     @Test
-    fun wazeRunningNotification_hasNoManeuver() {
-        val n = parse("Waze está en marcha", "Toca para abrir")
+    fun appRunningNotification_hasNoManeuver() {
+        val n = parse("La navegación está en marcha", "Toca para abrir")
         assertEquals("", n.maneuverDistance)
+    }
+
+    // ------------------------------------------------------------ OsmAnd real (captura)
+
+    @Test
+    fun osmandRealNotification_ignoresNextManeuverAndLooseEn() {
+        // Captura real de OsmAnd~: título sin calle (acaba en "en") y, en el texto,
+        // la maniobra siguiente (150 m) y el resumen en dos líneas.
+        val n = parse(
+            "80 m • Gira a la izquierda en",
+            "Gira a la izquierda en Carrer de Sagunt 150 m\n9,0 km • 24 min • 18:45",
+        )
+        assertEquals("80 m", n.maneuverDistance)
+        assertEquals("Gira a la izquierda", n.instruction)
+        assertEquals("9,0 km", n.distance)
+        assertEquals("24 min", n.duration)
+        assertEquals("18:45", n.eta)
+    }
+
+    @Test
+    fun osmandWithStreetInTitle() {
+        val n = parse(
+            "120 m • Gira a la derecha en Carrer Gran",
+            "Sigue recto en Avinguda Diagonal 400 m\n3,2 km • 9 min • 19:02",
+        )
+        assertEquals("120 m", n.maneuverDistance)
+        assertEquals("Gira a la derecha en Carrer Gran", n.instruction)
+        assertEquals("3,2 km", n.distance)
+    }
+
+    @Test
+    fun osmandSameTextInBigText_isNotDuplicated() {
+        val text = "Gira a la izquierda en Carrer de Sagunt 150 m\n9,0 km • 24 min • 18:45"
+        val n = parse("80 m • Gira a la izquierda en", text, big = text)
+        assertEquals("Gira a la izquierda", n.instruction)
+        assertEquals("9,0 km", n.distance)
     }
 }

@@ -22,7 +22,7 @@ enum class ConnectionState(val label: String) {
 
 /**
  * Punto de encuentro entre las tres partes de la app, que viven en el mismo proceso:
- *  - [NavigationListener] publica la navegación leída de Maps, Waze u OsmAnd.
+ *  - [NavigationListener] publica la navegación leída de Maps u OsmAnd.
  *  - [BleService] la envía a la placa y publica el estado de la conexión.
  *  - [MainActivity] y [LogActivity] lo muestran.
  *
