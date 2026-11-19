@@ -1,3 +1,11 @@
+/*
+ * Configuración de LVGL 9.3 para Navegador ESP32.
+ * Basada en la del firmware esp32-c3-mini (Felix Biego, MIT). Cambios propios:
+ *  - Solo se compilan las fuentes Montserrat integradas de 14 px (fuente por defecto)
+ *    y 20 px (para el icono de Bluetooth, LV_SYMBOL_BLUETOOTH).
+ *  - LV_FONT_CUSTOM_DECLARE declara las fuentes propias de src/fuentes, que incluyen
+ *    los caracteres de castellano y catalán.
+ */
 /**
  * @file lv_conf.h
  * Configuration file for v9.0.1-dev

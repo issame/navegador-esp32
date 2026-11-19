@@ -72,6 +72,34 @@ cd app-android
 
 El APK queda en `app/build/outputs/apk/debug/app-debug.apk`.
 
+Para la versión **release** (`./gradlew assembleRelease`) hace falta una clave de firma en
+`app-android/firma/` (no se sube a git): un almacén `navegador.jks` y un archivo
+`firma.properties` con `storeFile`, `storePassword`, `keyAlias` y `keyPassword`. Guarda esa
+clave: las actualizaciones de la app deben firmarse siempre con la misma.
+
+### Archivos de la app
+
+| Archivo | Qué hace |
+|---|---|
+| `MapsListener.kt` | Lee la notificación de navegación de Google Maps |
+| `MapsParser.kt` | Saca distancia, indicación, tiempo, distancia restante y llegada de sus textos |
+| `IconConverter.kt`, `IconBits.kt` | Convierten la flecha de Maps a 48×48 a 1 bit |
+| `Protocol.kt` | Construye y trocea los paquetes BLE |
+| `BleService.kt` | Mantiene la conexión con la placa y envía hora y navegación |
+| `Hub.kt` | Estado compartido entre las partes de la app y registro |
+| `MainActivity.kt`, `LogActivity.kt` | Pantallas de la app |
+| `Prefs.kt`, `Perms.kt` | Placa emparejada y permisos |
+
+### Archivos del firmware
+
+| Archivo | Qué hace |
+|---|---|
+| `src/main.cpp` | Arranque, conexión BLE y bucle principal |
+| `src/ui.cpp` | Pantallas de reloj y navegación (LVGL) |
+| `src/arranque.hpp` | Icono del mapa de la pantalla de arranque |
+| `src/pantalla.hpp` | Pines y configuración del panel GC9A01 |
+| `src/fuentes/` | Fuentes con caracteres de castellano y catalán |
+
 Al abrirla por primera vez:
 
 1. Concede los permisos de Bluetooth.

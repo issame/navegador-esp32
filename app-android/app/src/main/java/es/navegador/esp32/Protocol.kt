@@ -5,125 +5,160 @@ import java.time.LocalDateTime
 import java.util.zip.CRC32
 
 /**
- * Paquetes BLE que entiende la librería ChronosESP32 (la misma que usa el firmware).
+ * Construye los paquetes BLE que entiende la librería ChronosESP32, que es la que usa
+ * el firmware de la placa para recibir datos.
  *
- * Formato de un paquete:  AB  len_hi len_lo  FE|FF  comando  datos…
- * donde len = longitud total − 3.
+ * Formato de cada paquete:
+ * ```
+ *   AB  longitud_alta longitud_baja  FE|FF  comando  datos…
+ * ```
+ * donde `longitud` = tamaño total del paquete − 3.
  *
- * Si un paquete no cabe en una sola escritura BLE se trocea así: el primer trozo lleva
- * los 20 primeros bytes y cada trozo siguiente lleva un índice (0, 1, 2…) seguido de
- * 19 bytes. Ver ChronosESP32::onWrite.
+ * Si el paquete no cabe en una sola escritura BLE se trocea: el primer trozo lleva los
+ * 20 primeros bytes y cada trozo siguiente empieza por un índice (0, 1, 2…) seguido de
+ * 19 bytes de datos. Así lo reconstruye `ChronosESP32::onWrite` en la placa.
  */
 object Protocol {
-    /** El búfer de la librería es de 512 bytes; dejamos margen. */
-    const val MAX_PACKET = 500
-    const val ICON_BYTES = 288 // 48 x 48 / 8
-    private const val ICON_CHUNK = 96
+    /** El búfer de recepción de la librería es de 512 bytes; se deja margen de seguridad. */
+    const val MAX_PACKET_BYTES = 500
 
-    private const val CMD_TIME = 0x93
-    private const val CMD_NAV = 0xEF
-    private const val CMD_NAV_ICON = 0xEE
+    /** La flecha de la maniobra mide 48 x 48 píxeles a 1 bit por píxel. */
+    const val ICON_BYTES = 48 * 48 / 8
 
-    private const val LIMIT_SHORT = 40
-    private const val LIMIT_INSTRUCTION = 300
+    /** La flecha se envía en 3 paquetes de 96 bytes. */
+    private const val ICON_CHUNK_BYTES = 96
 
-    /** Fecha y hora (comando 0x93). El mes va de 1 a 12. */
-    fun timePacket(t: LocalDateTime): ByteArray = bytes(
-        0xAB, 0x00, 0x0B, 0xFF, CMD_TIME, 0x70, 0x00,
-        (t.year shr 8) and 0xFF, t.year and 0xFF,
-        t.monthValue, t.dayOfMonth, t.hour, t.minute, t.second,
+    private const val COMMAND_TIME = 0x93
+    private const val COMMAND_NAVIGATION = 0xEF
+    private const val COMMAND_NAVIGATION_ICON = 0xEE
+
+    private const val NAVIGATION_ACTIVE = 0x80
+    private const val NAVIGATION_INACTIVE = 0x00
+
+    /** Tamaño del primer trozo de un paquete troceado y de los datos de los siguientes. */
+    private const val FIRST_CHUNK_BYTES = 20
+    private const val NEXT_CHUNK_DATA_BYTES = 19
+
+    /** Límites por texto para que el paquete de navegación nunca supere [MAX_PACKET_BYTES]. */
+    private const val MAX_SHORT_TEXT_BYTES = 40
+    private const val MAX_INSTRUCTION_BYTES = 300
+
+    /** Paquete de fecha y hora (comando 0x93). El mes va de 1 a 12. */
+    fun timePacket(time: LocalDateTime): ByteArray = bytesOf(
+        0xAB, 0x00, 0x0B, 0xFF, COMMAND_TIME, 0x70, 0x00,
+        (time.year shr 8) and 0xFF, time.year and 0xFF,
+        time.monthValue, time.dayOfMonth, time.hour, time.minute, time.second,
     )
 
-    /** Navegación terminada (comando 0xEF, estado 0x00). */
-    fun navInactivePacket(): ByteArray = packet(CMD_NAV, bytes(0x00))
+    /** Paquete que avisa de que la navegación ha terminado (comando 0xEF, estado 0x00). */
+    fun navigationEndedPacket(): ByteArray = packet(COMMAND_NAVIGATION, bytesOf(NAVIGATION_INACTIVE))
 
     /**
-     * Navegación activa (comando 0xEF, estado 0x80). Los textos van terminados en 0, en este orden:
-     * título (distancia a la maniobra), duración, distancia, llegada, indicación, velocidad.
+     * Paquete de navegación activa (comando 0xEF, estado 0x80).
+     *
+     * Después de la cabecera van 6 textos UTF-8 terminados en 0, en este orden:
+     * distancia a la maniobra, duración, distancia restante, hora de llegada,
+     * indicación y velocidad (esta última no se usa y va vacía).
+     *
+     * @param iconCrc identifica la flecha actual; la placa solo la redibuja si cambia.
      */
-    fun navPacket(nav: NavInfo, iconCrc: Long): ByteArray {
-        val out = ByteArrayOutputStream()
-        out.write(0x80)
-        out.write(if (nav.icon != null) 1 else 0)
-        out.write(1) // es navegación (no información general)
-        out.write(((iconCrc shr 24) and 0xFF).toInt())
-        out.write(((iconCrc shr 16) and 0xFF).toInt())
-        out.write(((iconCrc shr 8) and 0xFF).toInt())
-        out.write((iconCrc and 0xFF).toInt())
+    fun navigationPacket(nav: NavInfo, iconCrc: Long): ByteArray {
+        val body = ByteArrayOutputStream()
+        body.write(NAVIGATION_ACTIVE)
+        body.write(if (nav.icon != null) 1 else 0) // ¿hay flecha?
+        body.write(1) // 1 = navegación con maniobras (0 sería solo información)
+        writeUInt32(body, iconCrc)
         listOf(
-            truncateUtf8(nav.maneuverDistance, LIMIT_SHORT),
-            truncateUtf8(nav.duration, LIMIT_SHORT),
-            truncateUtf8(nav.distance, LIMIT_SHORT),
-            truncateUtf8(nav.eta, LIMIT_SHORT),
-            truncateUtf8(nav.instruction, LIMIT_INSTRUCTION),
-            "", // velocidad: no se usa
-        ).forEach {
-            out.write(it.toByteArray(Charsets.UTF_8))
-            out.write(0)
+            truncateUtf8(nav.maneuverDistance, MAX_SHORT_TEXT_BYTES),
+            truncateUtf8(nav.duration, MAX_SHORT_TEXT_BYTES),
+            truncateUtf8(nav.distance, MAX_SHORT_TEXT_BYTES),
+            truncateUtf8(nav.eta, MAX_SHORT_TEXT_BYTES),
+            truncateUtf8(nav.instruction, MAX_INSTRUCTION_BYTES),
+            "", // velocidad
+        ).forEach { text ->
+            body.write(text.toByteArray(Charsets.UTF_8))
+            body.write(0)
         }
-        return packet(CMD_NAV, out.toByteArray())
+        return packet(COMMAND_NAVIGATION, body.toByteArray())
     }
 
-    /** Icono de la maniobra en 3 paquetes de 96 bytes (comando 0xEE). */
-    fun iconPackets(icon: ByteArray, crc: Long): List<ByteArray> {
-        require(icon.size == ICON_BYTES) { "El icono debe tener $ICON_BYTES bytes" }
-        return (0 until ICON_BYTES / ICON_CHUNK).map { pos ->
-            val body = ByteArray(6 + ICON_CHUNK)
-            body[0] = 0
-            body[1] = pos.toByte()
-            body[2] = ((crc shr 24) and 0xFF).toByte()
-            body[3] = ((crc shr 16) and 0xFF).toByte()
-            body[4] = ((crc shr 8) and 0xFF).toByte()
-            body[5] = (crc and 0xFF).toByte()
-            icon.copyInto(body, 6, pos * ICON_CHUNK, (pos + 1) * ICON_CHUNK)
-            packet(CMD_NAV_ICON, body)
+    /**
+     * Paquetes con la flecha de la maniobra (comando 0xEE): 3 trozos de 96 bytes.
+     * Cada uno lleva su posición (0, 1, 2) y el CRC de la flecha completa.
+     */
+    fun iconPackets(icon: ByteArray, iconCrc: Long): List<ByteArray> {
+        require(icon.size == ICON_BYTES) { "La flecha debe tener $ICON_BYTES bytes" }
+        return (0 until ICON_BYTES / ICON_CHUNK_BYTES).map { position ->
+            val body = ByteArrayOutputStream()
+            body.write(0) // reservado; la librería no lo usa
+            body.write(position)
+            writeUInt32(body, iconCrc)
+            body.write(icon, position * ICON_CHUNK_BYTES, ICON_CHUNK_BYTES)
+            packet(COMMAND_NAVIGATION_ICON, body.toByteArray())
         }
     }
 
+    /** CRC32 de la flecha, para saber si ha cambiado y hay que reenviarla. */
     fun iconCrc(icon: ByteArray): Long = CRC32().apply { update(icon) }.value
 
-    /** Trocea un paquete para escrituras de como mucho [maxWrite] bytes. */
-    fun split(packet: ByteArray, maxWrite: Int): List<ByteArray> {
-        if (packet.size <= maxWrite) return listOf(packet)
-        val parts = mutableListOf(packet.copyOfRange(0, 20))
-        var pos = 20
-        var index = 0
-        while (pos < packet.size) {
-            val end = minOf(pos + 19, packet.size)
-            parts += byteArrayOf(index.toByte()) + packet.copyOfRange(pos, end)
-            pos = end
-            index++
+    /**
+     * Divide un paquete en escrituras BLE de como mucho [maxWriteBytes] bytes
+     * (MTU negociada − 3). Si cabe entero, se envía en una sola escritura.
+     */
+    fun split(packet: ByteArray, maxWriteBytes: Int): List<ByteArray> {
+        if (packet.size <= maxWriteBytes) return listOf(packet)
+        val chunks = mutableListOf(packet.copyOfRange(0, FIRST_CHUNK_BYTES))
+        var offset = FIRST_CHUNK_BYTES
+        var chunkIndex = 0
+        while (offset < packet.size) {
+            val end = minOf(offset + NEXT_CHUNK_DATA_BYTES, packet.size)
+            chunks += byteArrayOf(chunkIndex.toByte()) + packet.copyOfRange(offset, end)
+            offset = end
+            chunkIndex++
         }
-        return parts
+        return chunks
     }
 
-    /** Recorta a [maxBytes] bytes en UTF-8 sin partir nunca un carácter. */
+    /**
+     * Recorta [text] para que ocupe como mucho [maxBytes] bytes en UTF-8, sin partir
+     * nunca un carácter (una "ñ" ocupa 2 bytes, un "€" 3). Si recorta, añade "…".
+     */
     fun truncateUtf8(text: String, maxBytes: Int): String {
-        val clean = text.replace('\u0000', ' ')
-        if (clean.toByteArray(Charsets.UTF_8).size <= maxBytes) return clean
+        val withoutNulls = text.replace('\u0000', ' ') // el 0 separa textos en el paquete
+        if (withoutNulls.toByteArray(Charsets.UTF_8).size <= maxBytes) return withoutNulls
+
         val ellipsis = "…"
-        val budget = maxBytes - ellipsis.toByteArray(Charsets.UTF_8).size
-        val sb = StringBuilder()
-        var used = 0
-        var i = 0
-        while (i < clean.length) {
-            val cp = clean.codePointAt(i)
-            val chunk = String(Character.toChars(cp))
-            val size = chunk.toByteArray(Charsets.UTF_8).size
-            if (used + size > budget) break
-            sb.append(chunk)
-            used += size
-            i += Character.charCount(cp)
+        val budgetBytes = maxBytes - ellipsis.toByteArray(Charsets.UTF_8).size
+        val result = StringBuilder()
+        var usedBytes = 0
+        var index = 0
+        while (index < withoutNulls.length) {
+            val codePoint = withoutNulls.codePointAt(index)
+            val character = String(Character.toChars(codePoint))
+            val characterBytes = character.toByteArray(Charsets.UTF_8).size
+            if (usedBytes + characterBytes > budgetBytes) break
+            result.append(character)
+            usedBytes += characterBytes
+            index += Character.charCount(codePoint)
         }
-        return sb.toString().trimEnd() + ellipsis
+        return result.toString().trimEnd() + ellipsis
     }
 
-    private fun packet(cmd: Int, body: ByteArray): ByteArray {
-        val total = 5 + body.size
-        require(total <= MAX_PACKET) { "Paquete demasiado grande: $total bytes" }
-        val len = total - 3
-        return bytes(0xAB, (len shr 8) and 0xFF, len and 0xFF, 0xFE, cmd) + body
+    /** Añade la cabecera `AB longitud FE comando` a [body]. */
+    private fun packet(command: Int, body: ByteArray): ByteArray {
+        val totalBytes = 5 + body.size
+        require(totalBytes <= MAX_PACKET_BYTES) { "Paquete demasiado grande: $totalBytes bytes" }
+        val lengthField = totalBytes - 3
+        return bytesOf(0xAB, (lengthField shr 8) and 0xFF, lengthField and 0xFF, 0xFE, command) + body
     }
 
-    private fun bytes(vararg v: Int) = ByteArray(v.size) { v[it].toByte() }
+    /** Escribe un entero de 32 bits sin signo, byte más alto primero. */
+    private fun writeUInt32(out: ByteArrayOutputStream, value: Long) {
+        out.write(((value shr 24) and 0xFF).toInt())
+        out.write(((value shr 16) and 0xFF).toInt())
+        out.write(((value shr 8) and 0xFF).toInt())
+        out.write((value and 0xFF).toInt())
+    }
+
+    private fun bytesOf(vararg values: Int) = ByteArray(values.size) { values[it].toByte() }
 }

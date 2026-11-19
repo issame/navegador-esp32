@@ -30,7 +30,7 @@ class ProtocolTest {
     fun navPacket_roundTrip_smallMtu_withAccents() {
         val nav = NavInfo(true, "250 m", accents, "19 min", "8,4 km", "14:51", ByteArray(288) { 1 })
         val crc = Protocol.iconCrc(nav.icon!!)
-        val packet = Protocol.navPacket(nav, crc)
+        val packet = Protocol.navigationPacket(nav, crc)
         assertTrue("debe necesitar trocearse", packet.size > 20)
 
         val sim = ChronosLibrarySim()
@@ -46,7 +46,7 @@ class ProtocolTest {
     @Test
     fun navPacket_roundTrip_bigMtu_singleWrite() {
         val nav = NavInfo(true, "1,2 km", accents, "1 h 5 min", "120 km", "16:05")
-        val packet = Protocol.navPacket(nav, 0xFFFFFFFFL)
+        val packet = Protocol.navigationPacket(nav, 0xFFFFFFFFL)
         assertEquals(1, Protocol.split(packet, 514).size)
         val sim = ChronosLibrarySim()
         send(sim, packet, 517)
@@ -57,9 +57,9 @@ class ProtocolTest {
     @Test
     fun navInactive_decodes() {
         val sim = ChronosLibrarySim()
-        send(sim, Protocol.navPacket(NavInfo(true, "1 m", "x"), 0), 23)
+        send(sim, Protocol.navigationPacket(NavInfo(true, "1 m", "x"), 0), 23)
         assertTrue(sim.navActive)
-        send(sim, Protocol.navInactivePacket(), 23)
+        send(sim, Protocol.navigationEndedPacket(), 23)
         assertFalse(sim.navActive)
     }
 
@@ -77,8 +77,8 @@ class ProtocolTest {
     @Test
     fun longInstruction_isTruncatedWithoutBreakingUtf8_andFitsBuffer() {
         val long = "ñàçé".repeat(200)
-        val packet = Protocol.navPacket(NavInfo(true, "250 m", long), 0)
-        assertTrue(packet.size <= Protocol.MAX_PACKET)
+        val packet = Protocol.navigationPacket(NavInfo(true, "250 m", long), 0)
+        assertTrue(packet.size <= Protocol.MAX_PACKET_BYTES)
         val sim = ChronosLibrarySim()
         send(sim, packet, 23)
         val got = sim.navStrings[4]

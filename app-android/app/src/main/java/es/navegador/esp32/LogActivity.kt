@@ -10,35 +10,41 @@ import androidx.lifecycle.repeatOnLifecycle
 import es.navegador.esp32.databinding.ActivityLogBinding
 import kotlinx.coroutines.launch
 
-/** Registro de lo recibido de Maps y lo enviado a la pantalla, para poder ajustar la lectura. */
+/**
+ * Registro de lo que llega de Google Maps (tal cual) y de lo que se envía a la placa.
+ * Sirve para ajustar [MapsParser] si una versión de Maps cambia el formato.
+ */
 class LogActivity : AppCompatActivity() {
 
-    private lateinit var b: ActivityLogBinding
+    private lateinit var binding: ActivityLogBinding
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        b = ActivityLogBinding.inflate(layoutInflater)
-        setContentView(b.root)
+        binding = ActivityLogBinding.inflate(layoutInflater)
+        setContentView(binding.root)
 
-        b.btnClear.setOnClickListener { Hub.clearLog() }
-        b.btnShare.setOnClickListener {
-            val text = Hub.logFileOrNull()?.readText() ?: Hub.lines.value.joinToString("\n")
-            val send = Intent(Intent.ACTION_SEND).apply {
-                type = "text/plain"
-                putExtra(Intent.EXTRA_SUBJECT, getString(R.string.registro))
-                putExtra(Intent.EXTRA_TEXT, text)
-            }
-            startActivity(Intent.createChooser(send, getString(R.string.compartir)))
-        }
+        binding.btnClear.setOnClickListener { Hub.clearLog() }
+        binding.btnShare.setOnClickListener { shareLog() }
 
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
-                Hub.lines.collect { lines ->
-                    b.txtLog.text = if (lines.isEmpty()) getString(R.string.registro_vacio)
+                Hub.logLines.collect { lines ->
+                    binding.txtLog.text = if (lines.isEmpty()) getString(R.string.registro_vacio)
                     else lines.joinToString("\n")
-                    b.scroll.post { b.scroll.fullScroll(View.FOCUS_DOWN) }
+                    binding.scroll.post { binding.scroll.fullScroll(View.FOCUS_DOWN) } // ir al final
                 }
             }
         }
+    }
+
+    /** Comparte el registro completo como texto (el archivo incluye sesiones anteriores). */
+    private fun shareLog() {
+        val logText = Hub.logFileIfExists()?.readText() ?: Hub.logLines.value.joinToString("\n")
+        val sendIntent = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_SUBJECT, getString(R.string.registro))
+            putExtra(Intent.EXTRA_TEXT, logText)
+        }
+        startActivity(Intent.createChooser(sendIntent, getString(R.string.compartir)))
     }
 }

@@ -13,8 +13,11 @@ import android.widget.ImageView
 import android.widget.TextView
 
 /**
- * Lee la notificación fija que Google Maps muestra mientras navega y publica
- * los datos en [Hub.nav]; el servicio BLE se encarga de enviarlos.
+ * Escucha las notificaciones del móvil y, cuando Google Maps está navegando, lee su
+ * notificación fija y publica los datos en [Hub.nav]. [BleService] se encarga de
+ * enviarlos a la placa.
+ *
+ * Android solo lo activa si el usuario concede "Acceso a notificaciones" en Ajustes.
  */
 class MapsListener : NotificationListenerService() {
 
@@ -22,13 +25,17 @@ class MapsListener : NotificationListenerService() {
         const val MAPS_PACKAGE = "com.google.android.apps.maps"
     }
 
-    private var navKey: String? = null
-    private var lastRaw: String? = null
+    /** Clave de la notificación de navegación actual, para saber cuándo desaparece. */
+    private var navigationNotificationKey: String? = null
+
+    /** Último texto registrado, para no llenar el registro con repeticiones. */
+    private var lastLoggedTexts: String? = null
 
     override fun onListenerConnected() {
         Hub.log("Acceso a notificaciones activo")
+        // Si Maps ya estaba navegando al activar el servicio, se lee lo que haya.
         runCatching {
-            activeNotifications?.filter { it.packageName == MAPS_PACKAGE }?.forEach(::handle)
+            activeNotifications?.filter { it.packageName == MAPS_PACKAGE }?.forEach(::readMapsNotification)
         }
     }
 
@@ -36,89 +43,97 @@ class MapsListener : NotificationListenerService() {
         Hub.log("Acceso a notificaciones desconectado")
     }
 
-    override fun onNotificationPosted(sbn: StatusBarNotification) {
-        if (sbn.packageName == MAPS_PACKAGE) runCatching { handle(sbn) }.onFailure {
-            Hub.log("Error leyendo Maps: ${it.message}")
-        }
+    override fun onNotificationPosted(statusBarNotification: StatusBarNotification) {
+        if (statusBarNotification.packageName != MAPS_PACKAGE) return
+        runCatching { readMapsNotification(statusBarNotification) }
+            .onFailure { Hub.log("Error leyendo Maps: ${it.message}") }
     }
 
-    override fun onNotificationRemoved(sbn: StatusBarNotification) {
-        if (sbn.packageName == MAPS_PACKAGE && sbn.key == navKey) {
-            navKey = null
-            lastRaw = null
+    override fun onNotificationRemoved(statusBarNotification: StatusBarNotification) {
+        if (statusBarNotification.packageName == MAPS_PACKAGE &&
+            statusBarNotification.key == navigationNotificationKey
+        ) {
+            navigationNotificationKey = null
+            lastLoggedTexts = null
             Hub.log("Maps: navegación terminada")
             Hub.setNav(NavInfo.INACTIVE)
         }
     }
 
-    private fun handle(sbn: StatusBarNotification) {
-        val n = sbn.notification
-        val isNavigation = n.category == Notification.CATEGORY_NAVIGATION
-        val ongoing = n.flags and Notification.FLAG_ONGOING_EVENT != 0
-        if (!isNavigation && !ongoing) return
+    private fun readMapsNotification(statusBarNotification: StatusBarNotification) {
+        val notification = statusBarNotification.notification
+        val isNavigationCategory = notification.category == Notification.CATEGORY_NAVIGATION
+        val isOngoing = notification.flags and Notification.FLAG_ONGOING_EVENT != 0
+        if (!isNavigationCategory && !isOngoing) return // notificaciones normales de Maps
 
-        val e = n.extras
-        var fields = MapsParser.Fields(
-            title = e.getCharSequence(Notification.EXTRA_TITLE)?.toString(),
-            text = e.getCharSequence(Notification.EXTRA_TEXT)?.toString(),
-            subText = e.getCharSequence(Notification.EXTRA_SUB_TEXT)?.toString(),
-            bigText = e.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString(),
-            infoText = e.getCharSequence(Notification.EXTRA_INFO_TEXT)?.toString(),
-            extra = e.getCharSequenceArray(Notification.EXTRA_TEXT_LINES)?.map { it.toString() }.orEmpty(),
+        val extras = notification.extras
+        var texts = MapsParser.NotificationTexts(
+            title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString(),
+            text = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString(),
+            subText = extras.getCharSequence(Notification.EXTRA_SUB_TEXT)?.toString(),
+            bigText = extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString(),
+            infoText = extras.getCharSequence(Notification.EXTRA_INFO_TEXT)?.toString(),
+            extra = extras.getCharSequenceArray(Notification.EXTRA_TEXT_LINES)?.map { it.toString() }.orEmpty(),
         )
-        var parsed = MapsParser.parse(fields)
+        var navigation = MapsParser.parse(texts)
 
-        // Si los textos estándar no traen nada, se leen las vistas personalizadas de la notificación.
-        var remote: RemoteContent? = null
-        if (!parsed.active) {
-            remote = readRemoteViews(this, n)
-            if (remote != null && remote.texts.isNotEmpty()) {
-                fields = fields.copy(extra = fields.extra + remote.texts)
-                parsed = MapsParser.parse(fields)
+        // Si los textos estándar no traen nada útil, se leen las vistas personalizadas
+        // con las que Maps dibuja la notificación.
+        var customViews: CustomViewContent? = null
+        if (!navigation.active) {
+            customViews = readCustomViews(this, notification)
+            if (customViews != null && customViews.texts.isNotEmpty()) {
+                texts = texts.copy(extra = texts.extra + customViews.texts)
+                navigation = MapsParser.parse(texts)
             }
         }
 
-        val raw = fields.describe()
-        if (raw != lastRaw) {
-            lastRaw = raw
-            Hub.log("Maps: $raw")
+        val description = texts.describe()
+        if (description != lastLoggedTexts) {
+            lastLoggedTexts = description
+            Hub.log("Maps: $description")
         }
 
-        // Una notificación fija de otro tipo (p. ej. compartir ubicación) no trae distancia de maniobra.
-        val accepted = if (isNavigation) parsed.active else parsed.maneuverDistance.isNotEmpty()
-        if (!accepted) return
+        // Otra notificación fija de Maps (p. ej. "Compartiendo ubicación") no trae
+        // distancia de maniobra: así se distingue de la de navegación.
+        val isNavigation = if (isNavigationCategory) navigation.active else navigation.maneuverDistance.isNotEmpty()
+        if (!isNavigation) return
 
-        navKey = sbn.key
-        val icon = loadIcon(n) ?: remote?.drawable?.let(IconConverter::fromDrawable)
-        Hub.setTestActive(false)
-        Hub.setNav(parsed.copy(icon = icon))
+        navigationNotificationKey = statusBarNotification.key
+        val arrow = loadArrow(notification) ?: customViews?.image?.let(IconConverter::fromDrawable)
+        Hub.setTestActive(false) // una ruta real sustituye a la de prueba
+        Hub.setNav(navigation.copy(icon = arrow))
     }
 
+    /** La flecha de la maniobra es el icono grande de la notificación. */
     @Suppress("DEPRECATION")
-    private fun loadIcon(n: Notification): ByteArray? = runCatching {
-        n.getLargeIcon()?.loadDrawable(this)?.let(IconConverter::fromDrawable)
-            ?: (n.extras.get(Notification.EXTRA_LARGE_ICON) as? Bitmap)?.let { IconConverter.fromBitmap(this, it) }
+    private fun loadArrow(notification: Notification): ByteArray? = runCatching {
+        notification.getLargeIcon()?.loadDrawable(this)?.let(IconConverter::fromDrawable)
+            ?: (notification.extras.get(Notification.EXTRA_LARGE_ICON) as? Bitmap)
+                ?.let { IconConverter.fromBitmap(this, it) }
     }.getOrNull()
 
-    class RemoteContent(val texts: List<String>, val drawable: Drawable?)
+    /** Textos e imagen encontrados en las vistas personalizadas de una notificación. */
+    class CustomViewContent(val texts: List<String>, val image: Drawable?)
 
+    /** Dibuja las vistas personalizadas de la notificación y recoge sus textos y su primera imagen. */
     @Suppress("DEPRECATION")
-    private fun readRemoteViews(ctx: Context, n: Notification): RemoteContent? {
-        val views = n.bigContentView ?: n.contentView ?: return null
+    private fun readCustomViews(context: Context, notification: Notification): CustomViewContent? {
+        val remoteViews = notification.bigContentView ?: notification.contentView ?: return null
         return runCatching {
-            val root = views.apply(ctx, FrameLayout(ctx))
+            val root = remoteViews.apply(context, FrameLayout(context))
             val texts = mutableListOf<String>()
-            var image: Drawable? = null
-            fun walk(v: View) {
-                if (v.visibility != View.VISIBLE) return
-                when (v) {
-                    is TextView -> v.text?.toString()?.trim()?.takeIf { it.isNotEmpty() }?.let(texts::add)
-                    is ImageView -> if (image == null) image = v.drawable
-                    is ViewGroup -> for (i in 0 until v.childCount) walk(v.getChildAt(i))
+            var firstImage: Drawable? = null
+            fun visit(view: View) {
+                if (view.visibility != View.VISIBLE) return
+                when (view) {
+                    is TextView -> view.text?.toString()?.trim()?.takeIf { it.isNotEmpty() }?.let(texts::add)
+                    is ImageView -> if (firstImage == null) firstImage = view.drawable
+                    is ViewGroup -> for (i in 0 until view.childCount) visit(view.getChildAt(i))
                 }
             }
-            walk(root)
-            RemoteContent(texts, image)
+            visit(root)
+            CustomViewContent(texts, firstImage)
         }.getOrNull()
     }
 }

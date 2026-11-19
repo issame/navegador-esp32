@@ -8,7 +8,7 @@ import org.junit.Test
 class MapsParserTest {
 
     private fun parse(title: String?, text: String?, sub: String? = null, big: String? = null) =
-        MapsParser.parse(MapsParser.Fields(title = title, text = text, subText = sub, bigText = big))
+        MapsParser.parse(MapsParser.NotificationTexts(title = title, text = text, subText = sub, bigText = big))
 
     @Test
     fun distanceTitle_instructionText_summarySub() {
@@ -67,7 +67,7 @@ class MapsParserTest {
     @Test
     fun remoteViewTextsUsedWhenNoExtras() {
         val n = MapsParser.parse(
-            MapsParser.Fields(extra = listOf("150 m", "Incorpórate a la A-2", "12 min · 9 km · 18:20"))
+            MapsParser.NotificationTexts(extra = listOf("150 m", "Incorpórate a la A-2", "12 min · 9 km · 18:20"))
         )
         assertEquals("150 m", n.maneuverDistance)
         assertEquals("Incorpórate a la A-2", n.instruction)
