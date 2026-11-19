@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="verde">#1D9E75</color>
+    <color name="verde_claro">#E1F5EE</color>
+    <color name="verde_medio">#9FE1CB</color>
+    <color name="rojo">#E24B4A</color>
+    <color name="ambar">#BA7517</color>
+    <color name="gris">#888780</color>
+    <color name="negro">#000000</color>
+
+    <style name="Theme.Navegador" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="colorPrimary">@color/verde</item>
+        <item name="colorOnPrimary">#FFFFFF</item>
+    </style>
+</resources>

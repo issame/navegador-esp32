@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Navegador ESP32</string>
+    <string name="pantalla">Pantalla</string>
+    <string name="canal_conexion">Conexión con la pantalla</string>
+
+    <string name="titulo_pantalla">Pantalla</string>
+    <string name="sin_pantalla">Ninguna pantalla emparejada</string>
+    <string name="hora_enviada">Hora enviada: %1$s</string>
+    <string name="hora_no_enviada">Hora enviada: —</string>
+    <string name="buscar_pantalla">Buscar pantalla</string>
+    <string name="olvidar">Olvidar</string>
+    <string name="enviar_hora">Enviar hora</string>
+    <string name="pantalla_olvidada">Pantalla olvidada</string>
+    <string name="no_conectada">La pantalla no está conectada</string>
+
+    <string name="titulo_navegacion">Navegación</string>
+    <string name="sin_navegacion">Sin navegación activa</string>
+    <string name="inicia_ruta">Inicia una ruta en Google Maps</string>
+    <string name="probar_navegacion">Probar navegación</string>
+    <string name="detener_prueba">Detener prueba</string>
+
+    <string name="titulo_permisos">Permisos</string>
+    <string name="perm_bluetooth_ok">Bluetooth: concedido</string>
+    <string name="perm_bluetooth_falta">Bluetooth: falta permiso</string>
+    <string name="perm_notif_ok">Acceso a notificaciones: concedido</string>
+    <string name="perm_notif_falta">Acceso a notificaciones: falta (necesario para leer Maps)</string>
+    <string name="conceder">Conceder</string>
+    <string name="abrir_ajustes">Abrir ajustes</string>
+
+    <string name="ver_registro">Ver registro</string>
+    <string name="registro">Registro</string>
+    <string name="compartir">Compartir</string>
+    <string name="borrar">Borrar</string>
+    <string name="registro_vacio">Todavía no hay nada en el registro.</string>
+
+    <string name="buscando">Buscando pantallas…</string>
+    <string name="elige_pantalla">Elige la pantalla</string>
+    <string name="no_encontrada">No se ha encontrado ninguna pantalla</string>
+    <string name="cancelar">Cancelar</string>
+    <string name="sin_nombre">Sin nombre</string>
+    <string name="sin_bluetooth">Este móvil no tiene Bluetooth</string>
+    <string name="bluetooth_apagado">Activa el Bluetooth</string>
+    <string name="error_busqueda">No se pudo buscar (código %1$d)</string>
+</resources>

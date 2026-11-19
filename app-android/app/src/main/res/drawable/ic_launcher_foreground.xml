@@ -1,0 +1,21 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Mapa plegado -->
+    <path
+        android:fillColor="#E1F5EE"
+        android:pathData="M30.2,40.12L45.08,33.92L62.44,40.12L77.32,33.92L77.32,68.64L62.44,74.84L45.08,68.64L30.2,74.84Z" />
+    <path
+        android:strokeColor="#9FE1CB"
+        android:strokeWidth="1.9"
+        android:pathData="M45.08,33.92L45.08,68.64M62.44,40.12L62.44,74.84" />
+    <!-- Marcador -->
+    <path
+        android:fillColor="#E24B4A"
+        android:pathData="M61.2,30.2C54.38,30.2 50.04,35.16 50.04,40.74C50.04,48.18 61.2,57.48 61.2,57.48C61.2,57.48 72.36,48.18 72.36,40.74C72.36,35.16 68.02,30.2 61.2,30.2Z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M56.86,40.74a4.34,4.34 0,1 0,8.68 0a4.34,4.34 0,1 0,-8.68 0" />
+</vector>
