@@ -108,22 +108,23 @@ class NotificationParserTest {
     // ------------------------------------------------------------ OsmAnd real (captura)
 
     @Test
-    fun osmandRealNotification_ignoresNextManeuverAndLooseEn() {
-        // Captura real de OsmAnd~: título sin calle (acaba en "en") y, en el texto,
-        // la maniobra siguiente (150 m) y el resumen en dos líneas.
+    fun osmandRealNotification_takesStreetFromSecondLine() {
+        // Captura real de OsmAnd~: girar a la izquierda en 80 m hacia Carrer de Sagunt;
+        // después se recorren 150 m por esa calle hasta el giro siguiente. El título no trae
+        // la calle (acaba en "en"); el texto la trae en la primera línea y el resumen en la segunda.
         val n = parse(
             "80 m • Gira a la izquierda en",
             "Gira a la izquierda en Carrer de Sagunt 150 m\n9,0 km • 24 min • 18:45",
         )
         assertEquals("80 m", n.maneuverDistance)
-        assertEquals("Gira a la izquierda", n.instruction)
+        assertEquals("Gira a la izquierda en Carrer de Sagunt", n.instruction)
         assertEquals("9,0 km", n.distance)
         assertEquals("24 min", n.duration)
         assertEquals("18:45", n.eta)
     }
 
     @Test
-    fun osmandWithStreetInTitle() {
+    fun osmandWithStreetInTitle_unrelatedLineIsIgnored() {
         val n = parse(
             "120 m • Gira a la derecha en Carrer Gran",
             "Sigue recto en Avinguda Diagonal 400 m\n3,2 km • 9 min • 19:02",
@@ -137,7 +138,22 @@ class NotificationParserTest {
     fun osmandSameTextInBigText_isNotDuplicated() {
         val text = "Gira a la izquierda en Carrer de Sagunt 150 m\n9,0 km • 24 min • 18:45"
         val n = parse("80 m • Gira a la izquierda en", text, big = text)
-        assertEquals("Gira a la izquierda", n.instruction)
+        assertEquals("Gira a la izquierda en Carrer de Sagunt", n.instruction)
         assertEquals("9,0 km", n.distance)
+    }
+
+    @Test
+    fun osmandStreetAlreadyInTitle_isNotRepeated() {
+        val n = parse(
+            "80 m • Gira a la izquierda en Carrer de Sagunt",
+            "Gira a la izquierda en Carrer de Sagunt 150 m\n9,0 km • 24 min • 18:45",
+        )
+        assertEquals("Gira a la izquierda en Carrer de Sagunt", n.instruction)
+    }
+
+    @Test
+    fun streetWithoutDistanceLine_keepsTitleWithoutLooseEn() {
+        val n = parse("80 m • Gira a la izquierda en", "9,0 km • 24 min • 18:45")
+        assertEquals("Gira a la izquierda", n.instruction)
     }
 }

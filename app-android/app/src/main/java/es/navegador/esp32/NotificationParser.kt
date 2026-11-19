@@ -11,9 +11,10 @@ package es.navegador.esp32
  *  - **línea resumen**: contiene la hora de llegada y/o tiempo y distancia restantes
  *    ("19 min · 8,4 km · 14:51").
  *  - **indicación**: el resto del título y del texto ("Gira a la izquierda hacia…").
- *  - **maniobra siguiente**: otra línea con su propia distancia (OsmAnd muestra
- *    "Gira a la izquierda en Carrer de Sagunt 150 m" para la maniobra de después);
- *    se descarta para no mezclarla con la actual.
+ *  - **calle de la maniobra**: OsmAnd pone en el título "80 m • Gira a la izquierda en"
+ *    (sin calle, si no cabe) y en el texto "Gira a la izquierda en Carrer de Sagunt 150 m":
+ *    la misma maniobra con la calle y, al final, lo que se recorre por esa calle hasta el
+ *    giro siguiente. Esa línea completa la indicación; su distancia final se descarta.
  *
  * No depende de Android para poder probarla con tests normales (ver NotificationParserTest).
  */
@@ -77,6 +78,9 @@ object NotificationParser {
     private val TRAILING_PREPOSITION =
         Regex("\\s+(?:en|a|hacia|por|in|on|onto|to|at)$", RegexOption.IGNORE_CASE)
 
+    /** Distancia al final de una línea, sin preposición delante ("…Carrer de Sagunt 150 m"). */
+    private val TRAILING_DISTANCE = Regex("\\s*$NUMBER\\s?$DISTANCE_UNIT[.\\s]*$", RegexOption.IGNORE_CASE)
+
     /** Caracteres que separan la distancia de la indicación ("300 m · Gira…"). */
     private val SEPARATORS = setOf('·', '-', '–', '—', ',', ':', '•', ' ')
 
@@ -131,7 +135,17 @@ object NotificationParser {
                         continue
                     }
                 } else if (ANY_DISTANCE.containsMatchIn(candidate)) {
-                    continue // otra línea con su propia distancia: es la maniobra siguiente
+                    // Línea con su propia distancia, como la de OsmAnd con la calle. Si repite
+                    // la indicación actual y la alarga, la sustituye; si no, es otra cosa y se
+                    // descarta para no mezclarla con la maniobra actual.
+                    val withoutDistance = candidate.replace(TRAILING_DISTANCE, "").trim { it in SEPARATORS }
+                    val current = instructionParts.lastOrNull()
+                    if (current != null && withoutDistance.length > current.length &&
+                        withoutDistance.startsWith(current, ignoreCase = true)
+                    ) {
+                        instructionParts[instructionParts.lastIndex] = withoutDistance
+                    }
+                    continue
                 }
                 if (candidate != maneuverDistance) instructionParts += candidate
             }
