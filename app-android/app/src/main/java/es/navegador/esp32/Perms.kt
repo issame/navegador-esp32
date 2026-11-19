@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
+import android.os.PowerManager
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 
@@ -33,4 +34,12 @@ object Perms {
     /** El "Acceso a notificaciones" se concede en Ajustes, no con un diálogo. */
     fun hasNotificationAccess(context: Context): Boolean =
         NotificationManagerCompat.getEnabledListenerPackages(context).contains(context.packageName)
+
+    /**
+     * Algunos fabricantes cierran las apps en segundo plano para ahorrar batería, lo que
+     * cortaría la conexión con la placa. true si la app está excluida de ese ahorro.
+     */
+    fun isIgnoringBatteryOptimizations(context: Context): Boolean =
+        context.getSystemService(PowerManager::class.java)
+            ?.isIgnoringBatteryOptimizations(context.packageName) == true
 }

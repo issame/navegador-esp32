@@ -5,10 +5,10 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-class MapsParserTest {
+class NotificationParserTest {
 
     private fun parse(title: String?, text: String?, sub: String? = null, big: String? = null) =
-        MapsParser.parse(MapsParser.NotificationTexts(title = title, text = text, subText = sub, bigText = big))
+        NotificationParser.parse(NotificationParser.NotificationTexts(title = title, text = text, subText = sub, bigText = big))
 
     @Test
     fun distanceTitle_instructionText_summarySub() {
@@ -66,11 +66,42 @@ class MapsParserTest {
 
     @Test
     fun remoteViewTextsUsedWhenNoExtras() {
-        val n = MapsParser.parse(
-            MapsParser.NotificationTexts(extra = listOf("150 m", "Incorpórate a la A-2", "12 min · 9 km · 18:20"))
+        val n = NotificationParser.parse(
+            NotificationParser.NotificationTexts(extra = listOf("150 m", "Incorpórate a la A-2", "12 min · 9 km · 18:20"))
         )
         assertEquals("150 m", n.maneuverDistance)
         assertEquals("Incorpórate a la A-2", n.instruction)
         assertEquals("18:20", n.eta)
+    }
+
+    // ------------------------------------------------------------ Waze y OsmAnd
+
+    @Test
+    fun distanceAtEndOfInstruction_wazeStyle() {
+        val n = parse("Gira a la derecha en 300 m", "Calle Mayor")
+        assertEquals("300 m", n.maneuverDistance)
+        assertEquals("Gira a la derecha\nCalle Mayor", n.instruction)
+    }
+
+    @Test
+    fun distanceAtEndInEnglish_osmandStyle() {
+        val n = parse("Turn left in 1.2 km", "Main Street", "12 min • 5.4 km • 18:20")
+        assertEquals("1.2 km", n.maneuverDistance)
+        assertEquals("Turn left\nMain Street", n.instruction)
+        assertEquals("12 min", n.duration)
+        assertEquals("18:20", n.eta)
+    }
+
+    @Test
+    fun bulletSeparator_osmandStyle() {
+        val n = parse("450 m • Gire a la izquierda", "Avinguda Diagonal")
+        assertEquals("450 m", n.maneuverDistance)
+        assertEquals("Gire a la izquierda\nAvinguda Diagonal", n.instruction)
+    }
+
+    @Test
+    fun wazeRunningNotification_hasNoManeuver() {
+        val n = parse("Waze está en marcha", "Toca para abrir")
+        assertEquals("", n.maneuverDistance)
     }
 }

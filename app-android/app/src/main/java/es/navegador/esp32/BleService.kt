@@ -10,6 +10,7 @@ import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothGatt
 import android.bluetooth.BluetoothGattCallback
 import android.bluetooth.BluetoothGattCharacteristic
+import android.bluetooth.BluetoothGattDescriptor
 import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothProfile
 import android.bluetooth.BluetoothStatusCodes
@@ -18,6 +19,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.ServiceInfo
+import android.net.Uri
 import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
@@ -30,6 +32,11 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
@@ -40,7 +47,8 @@ import java.util.UUID
 /**
  * Servicio en primer plano que mantiene la conexión BLE con la placa y le envía:
  *  - la fecha y la hora al conectar, cada hora y cuando cambia la hora del móvil;
- *  - la navegación cada vez que cambia [Hub.nav].
+ *  - la navegación cada vez que cambia [Hub.nav];
+ *  - el firmware nuevo cuando el usuario elige actualizarla ([FirmwareUpdateProtocol]).
  *
  * Si se pierde la conexión, se reconecta solo. Todo el trabajo se hace en el hilo
  * principal (las respuestas de Bluetooth llegan en otro hilo y se pasan aquí).
@@ -61,6 +69,11 @@ class BleService : Service() {
         private const val DEFAULT_MTU = 23
 
         private const val WRITE_TIMEOUT_MS = 3_000L
+        private const val UPDATE_START_TIMEOUT_MS = 10_000L
+        private const val UPDATE_FINISH_TIMEOUT_MS = 20_000L
+
+        /** Descriptor estándar para activar los avisos (notificaciones) de una característica. */
+        private val CLIENT_CONFIG_DESCRIPTOR_UUID: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
         private const val TIME_RESYNC_INTERVAL_MS = 3_600_000L
         private const val MAX_RECONNECT_DELAY_MS = 30_000L
 
@@ -82,6 +95,16 @@ class BleService : Service() {
 
     private var currentGatt: BluetoothGatt? = null
     private var rxCharacteristic: BluetoothGattCharacteristic? = null
+
+    /** Características de actualización; null si el firmware de la placa no la admite. */
+    private var updateControlCharacteristic: BluetoothGattCharacteristic? = null
+    private var updateDataCharacteristic: BluetoothGattCharacteristic? = null
+
+    /** Último estado de actualización que ha avisado la placa. */
+    private val boardUpdateStatus = MutableStateFlow<FirmwareUpdateProtocol.BoardStatus?>(null)
+
+    /** Android solo admite una operación BLE a la vez: todas las escrituras pasan por aquí. */
+    private val gattLock = Mutex()
     private var negotiatedMtu = DEFAULT_MTU
 
     /** true cuando la placa está conectada y lista para recibir. */
@@ -126,6 +149,7 @@ class BleService : Service() {
         scope.launch { Hub.nav.collect { sendNavigation(it) } }
         scope.launch { Hub.requests.collect { if (it == Hub.Request.SEND_TIME) sendTime() } }
         scope.launch { Hub.connection.collect { updateNotification(it) } }
+        scope.launch { Hub.firmwareUpdateRequests.collect { updateFirmware(it) } }
         scope.launch {
             // La placa no tiene reloj con pila: se resincroniza cada hora por si se desvía.
             while (isActive) {
@@ -201,6 +225,8 @@ class BleService : Service() {
     private fun onConnectionLost(gatt: BluetoothGatt) {
         isReady = false
         rxCharacteristic = null
+        updateControlCharacteristic = null
+        updateDataCharacteristic = null
         while (pendingWrites.tryReceive().isSuccess) { /* descarta lo que quedaba por enviar */ }
         writeConfirmation?.complete(false)
         gatt.close()
@@ -246,13 +272,40 @@ class BleService : Service() {
                     return@launch
                 }
                 rxCharacteristic = characteristic
-                isReady = true
-                lastSentIconCrc = null // la placa puede haberse reiniciado: reenviar la flecha
-                Hub.setConnection(ConnectionState.CONNECTED)
-                Hub.log("Pantalla lista")
-                sendTime()
-                sendNavigation(Hub.nav.value)
+
+                // Servicio de actualización (solo en firmwares que lo incluyen).
+                val updateService = gatt.getService(FirmwareUpdateProtocol.SERVICE_UUID)
+                updateControlCharacteristic = updateService?.getCharacteristic(FirmwareUpdateProtocol.CONTROL_UUID)
+                updateDataCharacteristic = updateService?.getCharacteristic(FirmwareUpdateProtocol.DATA_UUID)
+                val control = updateControlCharacteristic
+                if (control != null && enableNotifications(gatt, control)) {
+                    return@launch // se termina en onDescriptorWrite
+                }
+                onBoardReady()
             }
+        }
+
+        override fun onDescriptorWrite(gatt: BluetoothGatt, descriptor: BluetoothGattDescriptor, status: Int) {
+            scope.launch {
+                if (status != BluetoothGatt.GATT_SUCCESS) Hub.log("No se pudieron activar los avisos de actualización")
+                onBoardReady()
+            }
+        }
+
+        // Avisos de la placa (estado de la actualización). Android 13+ usa la primera
+        // versión; las anteriores, la segunda.
+        override fun onCharacteristicChanged(
+            gatt: BluetoothGatt,
+            characteristic: BluetoothGattCharacteristic,
+            value: ByteArray,
+        ) {
+            onBoardNotification(characteristic, value)
+        }
+
+        @Deprecated("Android 12 y anteriores")
+        override fun onCharacteristicChanged(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic) {
+            @Suppress("DEPRECATION")
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) onBoardNotification(characteristic, characteristic.value)
         }
 
         override fun onCharacteristicWrite(
@@ -261,6 +314,38 @@ class BleService : Service() {
             status: Int,
         ) {
             writeConfirmation?.complete(status == BluetoothGatt.GATT_SUCCESS)
+        }
+    }
+
+    /** La placa está lista: se marca como conectada y se le envía todo lo actual. */
+    private fun onBoardReady() {
+        isReady = true
+        lastSentIconCrc = null // la placa puede haberse reiniciado: reenviar la flecha
+        Hub.setConnection(ConnectionState.CONNECTED)
+        Hub.log(
+            if (updateControlCharacteristic != null) "Pantalla lista (admite actualizar por Bluetooth)"
+            else "Pantalla lista"
+        )
+        sendTime()
+        sendNavigation(Hub.nav.value)
+    }
+
+    private fun onBoardNotification(characteristic: BluetoothGattCharacteristic, value: ByteArray?) {
+        if (characteristic.uuid != FirmwareUpdateProtocol.CONTROL_UUID || value == null) return
+        FirmwareUpdateProtocol.parseStatus(value)?.let { boardUpdateStatus.value = it }
+    }
+
+    /** Pide a la placa que avise cuando cambie [characteristic]. Devuelve false si no se pudo. */
+    @Suppress("DEPRECATION")
+    private fun enableNotifications(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic): Boolean {
+        if (!gatt.setCharacteristicNotification(characteristic, true)) return false
+        val descriptor = characteristic.getDescriptor(CLIENT_CONFIG_DESCRIPTOR_UUID) ?: return false
+        val enable = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            gatt.writeDescriptor(descriptor, enable) == BluetoothStatusCodes.SUCCESS
+        } else {
+            descriptor.value = enable
+            gatt.writeDescriptor(descriptor)
         }
     }
 
@@ -297,24 +382,145 @@ class BleService : Service() {
 
     /** Trocea el paquete según la MTU y lo pone en la cola de escritura. */
     private fun enqueue(packet: ByteArray) {
-        if (!isReady) return
+        // Durante una actualización la placa solo atiende al firmware nuevo; al reiniciarse
+        // se reconecta y se le reenvía todo.
+        if (!isReady || Hub.firmwareUpdateRunning.value) return
         Protocol.split(packet, negotiatedMtu - 3).forEach { pendingWrites.trySend(it) }
     }
 
-    /** Escribe un trozo y espera la confirmación antes de pasar al siguiente. */
+    /** Escribe un trozo de la cola de datos (hora y navegación). */
     private suspend fun writeChunk(chunk: ByteArray) {
-        val gatt = currentGatt
-        val characteristic = rxCharacteristic
-        if (!isReady || gatt == null || characteristic == null) return
-        val confirmation = CompletableDeferred<Boolean>()
-        writeConfirmation = confirmation
-        if (!startWrite(gatt, characteristic, chunk)) {
-            Hub.log("No se pudo enviar un paquete (${chunk.size} B)")
+        val characteristic = rxCharacteristic ?: return
+        writeAndWait(characteristic, chunk)
+    }
+
+    /**
+     * Escribe [data] en [characteristic] y espera a que la placa lo confirme.
+     * Devuelve false si no se pudo escribir o no llegó la confirmación.
+     */
+    private suspend fun writeAndWait(characteristic: BluetoothGattCharacteristic, data: ByteArray): Boolean =
+        gattLock.withLock {
+            val gatt = currentGatt
+            if (!isReady || gatt == null) return@withLock false
+            val confirmation = CompletableDeferred<Boolean>()
+            writeConfirmation = confirmation
+            if (!startWrite(gatt, characteristic, data)) {
+                Hub.log("No se pudo enviar un paquete (${data.size} B)")
+                return@withLock false
+            }
+            val confirmed = withTimeoutOrNull(WRITE_TIMEOUT_MS) { confirmation.await() } == true
+            if (!confirmed) Hub.log("La pantalla no confirmó un paquete")
+            confirmed
+        }
+
+    // ---------------------------------------------------------------- actualización del firmware
+
+    /**
+     * Envía el firmware de [file] a la placa: orden de empezar, el archivo en trozos y orden
+     * de terminar. La placa lo comprueba (MD5) y se reinicia con él; si algo falla, sigue
+     * con el firmware anterior.
+     */
+    private suspend fun updateFirmware(file: Uri) {
+        if (Hub.firmwareUpdateRunning.value) return
+        val control = updateControlCharacteristic
+        val data = updateDataCharacteristic
+        if (!isReady || control == null || data == null) {
+            reportUpdate(
+                if (!isReady) "La pantalla no está conectada"
+                else "El firmware de la placa no admite actualizar por Bluetooth. Grábalo una vez por USB."
+            )
             return
         }
-        if (withTimeoutOrNull(WRITE_TIMEOUT_MS) { confirmation.await() } != true) {
-            Hub.log("La pantalla no confirmó un paquete")
+
+        val firmware = withContext(Dispatchers.IO) {
+            runCatching { contentResolver.openInputStream(file)?.use { it.readBytes() } }.getOrNull()
         }
+        if (firmware == null) {
+            reportUpdate("No se pudo leer el archivo")
+            return
+        }
+        FirmwareUpdateProtocol.validate(firmware)?.let { problem ->
+            reportUpdate("No se puede usar este archivo: $problem")
+            return
+        }
+
+        Hub.setFirmwareUpdateRunning(true)
+        currentGatt?.requestConnectionPriority(BluetoothGatt.CONNECTION_PRIORITY_HIGH) // más rápido
+        try {
+            sendFirmware(firmware, control, data)
+        } finally {
+            Hub.setFirmwareUpdateRunning(false)
+            currentGatt?.requestConnectionPriority(BluetoothGatt.CONNECTION_PRIORITY_BALANCED)
+        }
+    }
+
+    private suspend fun sendFirmware(
+        firmware: ByteArray,
+        control: BluetoothGattCharacteristic,
+        data: BluetoothGattCharacteristic,
+    ) {
+        val sizeKb = firmware.size / 1024
+        reportUpdate("Preparando la placa ($sizeKb KB)…")
+        boardUpdateStatus.value = null
+        val start = FirmwareUpdateProtocol.startCommand(firmware.size, FirmwareUpdateProtocol.md5(firmware))
+        if (!writeAndWait(control, start)) {
+            reportUpdate("No se pudo empezar la actualización")
+            return
+        }
+        val startStatus = withTimeoutOrNull(UPDATE_START_TIMEOUT_MS) {
+            boardUpdateStatus.first { it != null && it.state != FirmwareUpdateProtocol.BoardState.IDLE }
+        }
+        if (startStatus?.state != FirmwareUpdateProtocol.BoardState.RECEIVING) {
+            reportFailure(startStatus)
+            return
+        }
+
+        // El archivo en trozos del tamaño máximo que admite la conexión.
+        val chunkBytes = negotiatedMtu - 3
+        var offset = 0
+        var lastPercent = -1
+        while (offset < firmware.size) {
+            if (boardUpdateStatus.value?.state == FirmwareUpdateProtocol.BoardState.FAILED) {
+                reportFailure(boardUpdateStatus.value)
+                return
+            }
+            val end = minOf(offset + chunkBytes, firmware.size)
+            if (!writeAndWait(data, firmware.copyOfRange(offset, end))) {
+                writeAndWait(control, byteArrayOf(FirmwareUpdateProtocol.COMMAND_CANCEL.toByte()))
+                reportUpdate("Se interrumpió el envío. La placa sigue con el firmware anterior.")
+                return
+            }
+            offset = end
+            val percent = offset * 100 / firmware.size
+            if (percent != lastPercent) {
+                lastPercent = percent
+                Hub.setFirmwareUpdateStatus("Enviando firmware: $percent %")
+            }
+        }
+
+        writeAndWait(control, byteArrayOf(FirmwareUpdateProtocol.COMMAND_FINISH.toByte()))
+        val finalStatus = withTimeoutOrNull(UPDATE_FINISH_TIMEOUT_MS) {
+            boardUpdateStatus.first {
+                it?.state == FirmwareUpdateProtocol.BoardState.COMPLETED ||
+                    it?.state == FirmwareUpdateProtocol.BoardState.FAILED
+            }
+        }
+        if (finalStatus?.state == FirmwareUpdateProtocol.BoardState.COMPLETED) {
+            reportUpdate("Firmware actualizado. La placa se reinicia y se volverá a conectar sola.")
+        } else {
+            reportFailure(finalStatus)
+        }
+    }
+
+    private fun reportFailure(status: FirmwareUpdateProtocol.BoardStatus?) {
+        val reason = if (status == null) "la placa no respondió"
+        else FirmwareUpdateProtocol.errorDescription(status.errorCode)
+        reportUpdate("La actualización falló: $reason. La placa sigue con el firmware anterior.")
+    }
+
+    private fun reportUpdate(message: String) {
+        Hub.setFirmwareUpdateStatus(message)
+        Hub.log("Actualización: $message")
     }
 
     /** La forma de escribir cambió en Android 13; se usa la que toque. */

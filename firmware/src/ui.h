@@ -28,3 +28,13 @@ void ui_mostrar_flecha(const uint8_t *bitsFlecha);
 
 // Vuelve a la pantalla de reloj (con un fundido) si no estaba visible.
 void ui_volver_al_reloj();
+
+// Arco alrededor del borde que se completa al acercarse a la maniobra.
+// fraccionRecorrida: 0 = acaba de empezar el tramo, 1 = en la maniobra; negativo lo oculta.
+// aviso: maniobra inminente; el arco se vuelve naranja, parpadea y la distancia también
+// se pinta en naranja.
+void ui_mostrar_progreso_maniobra(float fraccionRecorrida, bool aviso);
+
+// Pantalla de actualización del firmware por Bluetooth.
+void ui_mostrar_actualizacion(int porcentaje);
+void ui_mostrar_error_actualizacion(int codigoError);

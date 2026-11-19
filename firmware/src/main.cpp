@@ -3,21 +3,28 @@
 // Reloj e indicaciones de Google Maps en la placa ESP32-C3 con pantalla redonda de 1,28".
 // La app Android "Navegador ESP32" envía la hora y la navegación por Bluetooth LE usando
 // el protocolo de la librería ChronosESP32, que se encarga de recibir y decodificar los
-// paquetes. Este archivo une las tres piezas: pantalla (LovyanGFX), interfaz (LVGL) y BLE.
+// paquetes. Este archivo une las piezas: pantalla (LovyanGFX), interfaz (LVGL), BLE y
+// actualización del firmware por Bluetooth (ota.cpp).
 
 #include <Arduino.h>
 #include <ChronosESP32.h>
+#include <NimBLEDevice.h>
 #include <lvgl.h>
 
 #include "pantalla.hpp"
 #include "arranque.hpp"
 #include "ui.h"
+#include "ota.h"
+#include "distancia.h"
 
 static PantallaRedonda pantalla;
 
+// Nombre con el que la placa se anuncia por Bluetooth.
+static const char *NOMBRE_BLUETOOTH = "Navegador ESP32";
+
 // Enlace BLE con el móvil. Además guarda la hora (hereda de ESP32Time) y la última
 // navegación recibida.
-static ChronosESP32 enlaceMovil("Navegador ESP32", CS_240x240_128_CTF);
+static ChronosESP32 enlaceMovil(NOMBRE_BLUETOOTH, CS_240x240_128_CTF);
 
 // LVGL dibuja por franjas en dos búferes de 40 líneas: mientras uno se envía por DMA
 // a la pantalla, se dibuja en el otro.
@@ -29,6 +36,12 @@ static const uint8_t BRILLO_PANTALLA = 200; // 0 … 255
 static const uint32_t DURACION_ARRANQUE_MS = 2000;
 static const uint32_t INTERVALO_RELOJ_MS = 500;
 
+// A partir de esta distancia a la maniobra se avisa (arco naranja que parpadea).
+static const float DISTANCIA_AVISO_METROS = 100;
+
+// Tiempo que se deja ver un error de actualización antes de volver al reloj.
+static const uint32_t DURACION_ERROR_ACTUALIZACION_MS = 5000;
+
 // La librería BLE llama a sus funciones de aviso desde otra tarea. Ahí solo se activan
 // estas banderas; el trabajo con LVGL (que no admite varias tareas) se hace en loop().
 static volatile bool hayCambioDeConexion = false;
@@ -39,6 +52,16 @@ static volatile bool horaSincronizada = false;
 
 static uint32_t crcFlechaMostrada = 0xFFFFFFFF; // para no redibujar la misma flecha
 static uint32_t ultimaActualizacionReloj = 0;
+
+// Tramo actual (de una maniobra a la siguiente), para calcular el arco de progreso:
+// se recuerda la distancia a la que empezó y se compara con la que queda.
+static String indicacionDelTramo;
+static float distanciaInicialDelTramo = -1;
+
+// Lo último mostrado de la actualización por Bluetooth.
+static int porcentajeActualizacionMostrado = -1;
+static bool errorActualizacionMostrado = false;
+static uint32_t momentoErrorActualizacion = 0;
 
 // ------------------------------------------------------------------ LVGL ↔ pantalla
 
@@ -110,6 +133,32 @@ static void alRecibirDatos(Config tipo, uint32_t valorA, uint32_t valorB)
 
 // ------------------------------------------------------------------ trabajo en loop()
 
+// Calcula cuánto se ha recorrido del tramo actual y si la maniobra es inminente.
+static void actualizarProgresoManiobra(const String &distanciaManiobra, const String &indicacion)
+{
+  float metrosRestantes = distanciaEnMetros(distanciaManiobra);
+  if (metrosRestantes < 0)
+  {
+    ui_mostrar_progreso_maniobra(-1, false); // sin distancia no hay progreso que mostrar
+    return;
+  }
+
+  // Empieza un tramo nuevo si cambia la indicación o si la distancia crece
+  // (por ejemplo, porque Maps ha recalculado la ruta).
+  bool tramoNuevo = indicacion != indicacionDelTramo || metrosRestantes > distanciaInicialDelTramo;
+  if (tramoNuevo)
+  {
+    indicacionDelTramo = indicacion;
+    distanciaInicialDelTramo = metrosRestantes;
+  }
+
+  float fraccionRecorrida = 0;
+  if (distanciaInicialDelTramo > 0)
+    fraccionRecorrida = 1.0f - metrosRestantes / distanciaInicialDelTramo;
+  bool maniobraInminente = metrosRestantes <= DISTANCIA_AVISO_METROS;
+  ui_mostrar_progreso_maniobra(fraccionRecorrida, maniobraInminente);
+}
+
 static void mostrarNavegacionRecibida()
 {
   Navigation navegacion = enlaceMovil.getNavigation(); // copia: la tarea BLE puede cambiarla
@@ -117,7 +166,10 @@ static void mostrarNavegacionRecibida()
   {
     Serial.println("Navegación terminada");
     crcFlechaMostrada = 0xFFFFFFFF;
+    indicacionDelTramo = "";
+    distanciaInicialDelTramo = -1;
     ui_mostrar_flecha(nullptr);
+    ui_mostrar_progreso_maniobra(-1, false);
     ui_volver_al_reloj();
     return;
   }
@@ -134,6 +186,7 @@ static void mostrarNavegacionRecibida()
                 navegacion.eta.c_str(), navegacion.duration.c_str(), navegacion.distance.c_str());
   ui_mostrar_navegacion(distanciaManiobra, indicacion, navegacion.eta, navegacion.duration,
                         navegacion.distance, navegacion.hasIcon);
+  actualizarProgresoManiobra(distanciaManiobra, indicacion);
 }
 
 static void mostrarFlechaRecibida()
@@ -143,6 +196,40 @@ static void mostrarFlechaRecibida()
     return;
   crcFlechaMostrada = navegacion.iconCRC;
   ui_mostrar_flecha(navegacion.icon);
+}
+
+// Muestra el progreso de la actualización por Bluetooth y, si falla, el error.
+static void atenderActualizacion()
+{
+  ota::atender(); // reinicia la placa al completarse
+
+  ota::Estado estado = ota::estado();
+  if (estado == ota::RECIBIENDO || estado == ota::COMPLETADA)
+  {
+    errorActualizacionMostrado = false;
+    int porcentaje = ota::porcentaje();
+    if (porcentaje != porcentajeActualizacionMostrado)
+    {
+      porcentajeActualizacionMostrado = porcentaje;
+      ui_mostrar_actualizacion(porcentaje);
+    }
+    return;
+  }
+  if (estado == ota::FALLIDA && !errorActualizacionMostrado)
+  {
+    errorActualizacionMostrado = true;
+    momentoErrorActualizacion = millis();
+    porcentajeActualizacionMostrado = -1;
+    ui_mostrar_error_actualizacion(ota::ultimoError());
+    return;
+  }
+  // Pasado un rato tras el error, se vuelve al reloj.
+  if (errorActualizacionMostrado && momentoErrorActualizacion != 0 &&
+      millis() - momentoErrorActualizacion > DURACION_ERROR_ACTUALIZACION_MS)
+  {
+    momentoErrorActualizacion = 0;
+    ui_volver_al_reloj();
+  }
 }
 
 static void actualizarReloj()
@@ -174,7 +261,12 @@ void setup()
   arranque::dibujar(pantalla);
   uint32_t inicioArranque = millis();
 
-  // El Bluetooth arranca mientras se ve la pantalla de arranque.
+  // El Bluetooth arranca mientras se ve la pantalla de arranque. Primero se crea el
+  // servidor con el servicio de actualización; después ChronosESP32 añade el suyo al
+  // mismo servidor (NimBLE reutiliza el dispositivo y el servidor ya creados) y empieza
+  // a anunciarse con los dos.
+  NimBLEDevice::init(NOMBRE_BLUETOOTH);
+  ota::registrarServicio(NimBLEDevice::createServer());
   enlaceMovil.setConnectionCallback(alCambiarConexion);
   enlaceMovil.setConfigurationCallback(alRecibirDatos);
   enlaceMovil.set24Hour(true);
@@ -204,6 +296,15 @@ void loop()
     Serial.println(movilConectado ? "Móvil conectado" : "Móvil desconectado");
     ui_mostrar_conexion(movilConectado);
   }
+  atenderActualizacion();
+  if (ota::enCurso())
+  {
+    // Durante la actualización solo se muestra su progreso; la navegación pendiente se
+    // atiende al terminar (las banderas siguen activas).
+    delay(5);
+    return;
+  }
+
   if (hayNavegacionNueva)
   {
     hayNavegacionNueva = false;

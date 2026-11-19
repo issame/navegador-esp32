@@ -16,7 +16,7 @@
 
     <string name="titulo_navegacion">Navegación</string>
     <string name="sin_navegacion">Sin navegación activa</string>
-    <string name="inicia_ruta">Inicia una ruta en Google Maps</string>
+    <string name="inicia_ruta">Inicia una ruta en Google Maps, Waze u OsmAnd</string>
     <string name="probar_navegacion">Probar navegación</string>
     <string name="detener_prueba">Detener prueba</string>
 
@@ -24,9 +24,16 @@
     <string name="perm_bluetooth_ok">Bluetooth: concedido</string>
     <string name="perm_bluetooth_falta">Bluetooth: falta permiso</string>
     <string name="perm_notif_ok">Acceso a notificaciones: concedido</string>
-    <string name="perm_notif_falta">Acceso a notificaciones: falta (necesario para leer Maps)</string>
+    <string name="perm_notif_falta">Acceso a notificaciones: falta (necesario para leer Maps, Waze u OsmAnd)</string>
     <string name="conceder">Conceder</string>
     <string name="abrir_ajustes">Abrir ajustes</string>
+    <string name="perm_bateria_ok">Ahorro de batería: desactivado para la app</string>
+    <string name="perm_bateria_falta">Ahorro de batería: activo (puede cortar la conexión)</string>
+    <string name="desactivar">Desactivar</string>
+
+    <string name="actualizar_firmware">Actualizar firmware</string>
+    <string name="confirmar_actualizacion">¿Enviar %1$s (%2$d KB) a la pantalla? Tarda alrededor de un minuto. No cierres la app ni alejes el móvil.</string>
+    <string name="actualizar">Actualizar</string>
 
     <string name="ver_registro">Ver registro</string>
     <string name="registro">Registro</string>

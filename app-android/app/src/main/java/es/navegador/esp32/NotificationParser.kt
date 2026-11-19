@@ -1,18 +1,20 @@
 package es.navegador.esp32
 
 /**
- * Extrae los datos de navegación de los textos de la notificación de Google Maps.
+ * Extrae los datos de navegación de los textos de la notificación de una app de
+ * navegación (Google Maps, Waze, OsmAnd).
  *
- * El formato cambia según la versión y el idioma de Maps, así que no se depende de
+ * El formato cambia según la app, su versión y el idioma, así que no se depende de
  * posiciones fijas sino de patrones:
- *  - **distancia a la maniobra**: al principio de un texto ("250 m", "En 1,2 km, gira…").
+ *  - **distancia a la maniobra**: al principio de un texto ("250 m", "En 1,2 km, gira…")
+ *    o al final con "en"/"in" delante ("Gira a la derecha en 300 m").
  *  - **línea resumen**: contiene la hora de llegada y/o tiempo y distancia restantes
  *    ("19 min · 8,4 km · 14:51").
  *  - **indicación**: el resto del título y del texto ("Gira a la izquierda hacia…").
  *
- * No depende de Android para poder probarla con tests normales (ver MapsParserTest).
+ * No depende de Android para poder probarla con tests normales (ver NotificationParserTest).
  */
-object MapsParser {
+object NotificationParser {
 
     /** Textos tal como vienen en la notificación. */
     data class NotificationTexts(
@@ -35,7 +37,7 @@ object MapsParser {
         }.joinToString(", ")
     }
 
-    /** Espacios especiales que Maps usa en horas y distancias ("14 h", "2:51 p. m."). */
+    /** Espacios especiales que usan las apps en horas y distancias ("14 h", "2:51 p. m."). */
     private val SPECIAL_SPACES = Regex("[\\u00A0\\u2007\\u2009\\u202F]")
     private val REPEATED_WHITESPACE = Regex("\\s+")
 
@@ -46,8 +48,12 @@ object MapsParser {
     private const val DISTANCE_UNIT = "(?:km|m|mi|ft|yd)(?!\\p{L})"
 
     /** Distancia al principio del texto, con "en"/"a"/"in" delante opcional. */
-    private val MANEUVER_DISTANCE =
+    private val MANEUVER_DISTANCE_AT_START =
         Regex("^(?:(?:en|a|in)\\s+)?($NUMBER\\s?$DISTANCE_UNIT)", RegexOption.IGNORE_CASE)
+
+    /** Distancia al final del texto con "en"/"in" delante: "Gira a la derecha en 300 m". */
+    private val MANEUVER_DISTANCE_AT_END =
+        Regex("\\s+(?:en|in)\\s+($NUMBER\\s?$DISTANCE_UNIT)[.\\s]*$", RegexOption.IGNORE_CASE)
 
     /** Cualquier distancia dentro de un texto. */
     private val ANY_DISTANCE = Regex("$NUMBER\\s?$DISTANCE_UNIT", RegexOption.IGNORE_CASE)
@@ -80,7 +86,8 @@ object MapsParser {
         val summaryLine = allTexts.firstOrNull {
             CLOCK_TIME.containsMatchIn(it) && (DURATION.containsMatchIn(it) || ANY_DISTANCE.containsMatchIn(it))
         } ?: allTexts.firstOrNull {
-            DURATION.containsMatchIn(it) && ANY_DISTANCE.containsMatchIn(it) && !MANEUVER_DISTANCE.containsMatchIn(it)
+            DURATION.containsMatchIn(it) && ANY_DISTANCE.containsMatchIn(it) &&
+                !MANEUVER_DISTANCE_AT_START.containsMatchIn(it) && !MANEUVER_DISTANCE_AT_END.containsMatchIn(it)
         }
 
         val duration = summaryLine?.let { DURATION.find(it)?.value }.orEmpty()
@@ -93,15 +100,25 @@ object MapsParser {
         fun collectFrom(candidates: List<String>) {
             for (candidate in candidates) {
                 if (candidate == summaryLine) continue
-                val match = MANEUVER_DISTANCE.find(candidate)
-                if (match != null && maneuverDistance.isEmpty()) {
-                    maneuverDistance = match.groupValues[1]
-                    // Lo que va detrás de la distancia es parte de la indicación.
-                    val rest = candidate.substring(match.range.last + 1).trim { it in SEPARATORS }
-                    if (rest.isNotEmpty()) instructionParts += rest
-                } else if (candidate != maneuverDistance) {
-                    instructionParts += candidate
+                if (maneuverDistance.isEmpty()) {
+                    val atStart = MANEUVER_DISTANCE_AT_START.find(candidate)
+                    if (atStart != null) {
+                        maneuverDistance = atStart.groupValues[1]
+                        // Lo que va detrás de la distancia es parte de la indicación.
+                        val rest = candidate.substring(atStart.range.last + 1).trim { it in SEPARATORS }
+                        if (rest.isNotEmpty()) instructionParts += rest
+                        continue
+                    }
+                    val atEnd = MANEUVER_DISTANCE_AT_END.find(candidate)
+                    if (atEnd != null) {
+                        maneuverDistance = atEnd.groupValues[1]
+                        // Lo que va delante de "en 300 m" es la indicación.
+                        val rest = candidate.substring(0, atEnd.range.first).trim { it in SEPARATORS }
+                        if (rest.isNotEmpty()) instructionParts += rest
+                        continue
+                    }
                 }
+                if (candidate != maneuverDistance) instructionParts += candidate
             }
         }
         collectFrom(listOf(title, text).filter { it.isNotEmpty() })

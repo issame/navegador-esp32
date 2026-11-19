@@ -13,29 +13,41 @@ import android.widget.ImageView
 import android.widget.TextView
 
 /**
- * Escucha las notificaciones del móvil y, cuando Google Maps está navegando, lee su
- * notificación fija y publica los datos en [Hub.nav]. [BleService] se encarga de
- * enviarlos a la placa.
+ * Escucha las notificaciones del móvil y, cuando una app de navegación compatible está
+ * guiando una ruta, lee su notificación fija y publica los datos en [Hub.nav].
+ * [BleService] se encarga de enviarlos a la placa.
  *
  * Android solo lo activa si el usuario concede "Acceso a notificaciones" en Ajustes.
  */
-class MapsListener : NotificationListenerService() {
+class NavigationListener : NotificationListenerService() {
+
+    /** App de navegación compatible. */
+    private data class NavigationApp(
+        val name: String,
+        /** Si la flecha de la maniobra va en el icono pequeño (en las demás es el logo de la app). */
+        val arrowInSmallIcon: Boolean = false,
+    )
 
     companion object {
-        const val MAPS_PACKAGE = "com.google.android.apps.maps"
+        private val SUPPORTED_APPS = mapOf(
+            "com.google.android.apps.maps" to NavigationApp("Maps"),
+            "com.waze" to NavigationApp("Waze"),
+            "net.osmand.plus" to NavigationApp("OsmAnd+", arrowInSmallIcon = true),
+            "net.osmand" to NavigationApp("OsmAnd", arrowInSmallIcon = true),
+        )
     }
 
-    /** Clave de la notificación de navegación actual, para saber cuándo desaparece. */
-    private var navigationNotificationKey: String? = null
+    /** Clave de la notificación de navegación que se está mostrando, para saber cuándo desaparece. */
+    private var activeNotificationKey: String? = null
 
     /** Último texto registrado, para no llenar el registro con repeticiones. */
     private var lastLoggedTexts: String? = null
 
     override fun onListenerConnected() {
         Hub.log("Acceso a notificaciones activo")
-        // Si Maps ya estaba navegando al activar el servicio, se lee lo que haya.
+        // Si ya había una ruta en marcha al activar el servicio, se lee lo que haya.
         runCatching {
-            activeNotifications?.filter { it.packageName == MAPS_PACKAGE }?.forEach(::readMapsNotification)
+            activeNotifications?.filter { it.packageName in SUPPORTED_APPS }?.forEach(::readNavigationNotification)
         }
     }
 
@@ -44,30 +56,29 @@ class MapsListener : NotificationListenerService() {
     }
 
     override fun onNotificationPosted(statusBarNotification: StatusBarNotification) {
-        if (statusBarNotification.packageName != MAPS_PACKAGE) return
-        runCatching { readMapsNotification(statusBarNotification) }
-            .onFailure { Hub.log("Error leyendo Maps: ${it.message}") }
+        if (statusBarNotification.packageName !in SUPPORTED_APPS) return
+        runCatching { readNavigationNotification(statusBarNotification) }
+            .onFailure { Hub.log("Error leyendo la notificación: ${it.message}") }
     }
 
     override fun onNotificationRemoved(statusBarNotification: StatusBarNotification) {
-        if (statusBarNotification.packageName == MAPS_PACKAGE &&
-            statusBarNotification.key == navigationNotificationKey
-        ) {
-            navigationNotificationKey = null
-            lastLoggedTexts = null
-            Hub.log("Maps: navegación terminada")
-            Hub.setNav(NavInfo.INACTIVE)
-        }
+        if (statusBarNotification.key != activeNotificationKey) return
+        val appName = SUPPORTED_APPS[statusBarNotification.packageName]?.name ?: "?"
+        activeNotificationKey = null
+        lastLoggedTexts = null
+        Hub.log("$appName: navegación terminada")
+        Hub.setNav(NavInfo.INACTIVE)
     }
 
-    private fun readMapsNotification(statusBarNotification: StatusBarNotification) {
+    private fun readNavigationNotification(statusBarNotification: StatusBarNotification) {
+        val app = SUPPORTED_APPS[statusBarNotification.packageName] ?: return
         val notification = statusBarNotification.notification
         val isNavigationCategory = notification.category == Notification.CATEGORY_NAVIGATION
         val isOngoing = notification.flags and Notification.FLAG_ONGOING_EVENT != 0
-        if (!isNavigationCategory && !isOngoing) return // notificaciones normales de Maps
+        if (!isNavigationCategory && !isOngoing) return // notificaciones normales de la app
 
         val extras = notification.extras
-        var texts = MapsParser.NotificationTexts(
+        var texts = NotificationParser.NotificationTexts(
             title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString(),
             text = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString(),
             subText = extras.getCharSequence(Notification.EXTRA_SUB_TEXT)?.toString(),
@@ -75,42 +86,47 @@ class MapsListener : NotificationListenerService() {
             infoText = extras.getCharSequence(Notification.EXTRA_INFO_TEXT)?.toString(),
             extra = extras.getCharSequenceArray(Notification.EXTRA_TEXT_LINES)?.map { it.toString() }.orEmpty(),
         )
-        var navigation = MapsParser.parse(texts)
+        var navigation = NotificationParser.parse(texts)
 
         // Si los textos estándar no traen nada útil, se leen las vistas personalizadas
-        // con las que Maps dibuja la notificación.
+        // con las que la app dibuja la notificación.
         var customViews: CustomViewContent? = null
         if (!navigation.active) {
             customViews = readCustomViews(this, notification)
             if (customViews != null && customViews.texts.isNotEmpty()) {
                 texts = texts.copy(extra = texts.extra + customViews.texts)
-                navigation = MapsParser.parse(texts)
+                navigation = NotificationParser.parse(texts)
             }
         }
 
-        val description = texts.describe()
+        val description = "${app.name}: ${texts.describe()}"
         if (description != lastLoggedTexts) {
             lastLoggedTexts = description
-            Hub.log("Maps: $description")
+            Hub.log(description)
         }
 
-        // Otra notificación fija de Maps (p. ej. "Compartiendo ubicación") no trae
-        // distancia de maniobra: así se distingue de la de navegación.
+        // Otras notificaciones fijas (p. ej. "Compartiendo ubicación" o "Waze está en
+        // marcha") no traen distancia de maniobra: así se distinguen de la de navegación.
         val isNavigation = if (isNavigationCategory) navigation.active else navigation.maneuverDistance.isNotEmpty()
         if (!isNavigation) return
 
-        navigationNotificationKey = statusBarNotification.key
-        val arrow = loadArrow(notification) ?: customViews?.image?.let(IconConverter::fromDrawable)
+        activeNotificationKey = statusBarNotification.key
+        val arrow = loadArrow(notification, app) ?: customViews?.image?.let(IconConverter::fromDrawable)
         Hub.setTestActive(false) // una ruta real sustituye a la de prueba
         Hub.setNav(navigation.copy(icon = arrow))
     }
 
-    /** La flecha de la maniobra es el icono grande de la notificación. */
+    /** La flecha de la maniobra suele ser el icono grande; en OsmAnd, el pequeño. */
     @Suppress("DEPRECATION")
-    private fun loadArrow(notification: Notification): ByteArray? = runCatching {
+    private fun loadArrow(notification: Notification, app: NavigationApp): ByteArray? = runCatching {
         notification.getLargeIcon()?.loadDrawable(this)?.let(IconConverter::fromDrawable)
             ?: (notification.extras.get(Notification.EXTRA_LARGE_ICON) as? Bitmap)
                 ?.let { IconConverter.fromBitmap(this, it) }
+            ?: if (app.arrowInSmallIcon) {
+                notification.smallIcon?.loadDrawable(this)?.let(IconConverter::fromDrawable)
+            } else {
+                null
+            }
     }.getOrNull()
 
     /** Textos e imagen encontrados en las vistas personalizadas de una notificación. */

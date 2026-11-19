@@ -1,5 +1,6 @@
 package es.navegador.esp32
 
+import android.net.Uri
 import android.util.Log
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -21,12 +22,12 @@ enum class ConnectionState(val label: String) {
 
 /**
  * Punto de encuentro entre las tres partes de la app, que viven en el mismo proceso:
- *  - [MapsListener] publica la navegación leída de Google Maps.
+ *  - [NavigationListener] publica la navegación leída de Maps, Waze u OsmAnd.
  *  - [BleService] la envía a la placa y publica el estado de la conexión.
  *  - [MainActivity] y [LogActivity] lo muestran.
  *
  * También guarda el registro (en memoria y en un archivo) para poder revisar después
- * qué llegó de Maps y qué se envió.
+ * qué llegó de la app de navegación y qué se envió.
  */
 object Hub {
     /** Peticiones de la interfaz al servicio BLE. */
@@ -37,7 +38,7 @@ object Hub {
     private val LOG_TIME_FORMAT = DateTimeFormatter.ofPattern("HH:mm:ss")
 
     private val _nav = MutableStateFlow(NavInfo.INACTIVE)
-    /** Navegación actual (de Maps o de la prueba). */
+    /** Navegación actual (de la app de navegación o de la prueba). */
     val nav: StateFlow<NavInfo> = _nav.asStateFlow()
 
     private val _connection = MutableStateFlow(ConnectionState.DISCONNECTED)
@@ -57,6 +58,17 @@ object Hub {
     /** true mientras se muestra la ruta de prueba. */
     val testActive: StateFlow<Boolean> = _testActive.asStateFlow()
 
+    private val _firmwareUpdateRequests = MutableSharedFlow<Uri>(extraBufferCapacity = 1)
+    /** Archivos .bin que el usuario ha elegido para actualizar la placa. */
+    val firmwareUpdateRequests: SharedFlow<Uri> = _firmwareUpdateRequests.asSharedFlow()
+
+    private val _firmwareUpdateStatus = MutableStateFlow<String?>(null)
+    /** Texto con el estado de la actualización del firmware, o null si no hay ninguna. */
+    val firmwareUpdateStatus: StateFlow<String?> = _firmwareUpdateStatus.asStateFlow()
+
+    private val _firmwareUpdateRunning = MutableStateFlow(false)
+    val firmwareUpdateRunning: StateFlow<Boolean> = _firmwareUpdateRunning.asStateFlow()
+
     private var logFile: File? = null
 
     /** Se llama al arrancar la app ([App]) con su carpeta privada de archivos. */
@@ -69,6 +81,9 @@ object Hub {
     fun setLastTimeSent(time: String) { _lastTimeSent.value = time }
     fun setTestActive(active: Boolean) { _testActive.value = active }
     fun request(request: Request) { _requests.tryEmit(request) }
+    fun requestFirmwareUpdate(file: Uri) { _firmwareUpdateRequests.tryEmit(file) }
+    fun setFirmwareUpdateStatus(status: String?) { _firmwareUpdateStatus.value = status }
+    fun setFirmwareUpdateRunning(running: Boolean) { _firmwareUpdateRunning.value = running }
 
     /** Añade una línea con la hora al registro en memoria, al archivo y a logcat. */
     @Synchronized

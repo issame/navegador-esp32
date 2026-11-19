@@ -11,8 +11,8 @@ import es.navegador.esp32.databinding.ActivityLogBinding
 import kotlinx.coroutines.launch
 
 /**
- * Registro de lo que llega de Google Maps (tal cual) y de lo que se envía a la placa.
- * Sirve para ajustar [MapsParser] si una versión de Maps cambia el formato.
+ * Registro de lo que llega de la app de navegación (tal cual) y de lo que se envía a la placa.
+ * Sirve para ajustar [NotificationParser] si una app cambia el formato.
  */
 class LogActivity : AppCompatActivity() {
 

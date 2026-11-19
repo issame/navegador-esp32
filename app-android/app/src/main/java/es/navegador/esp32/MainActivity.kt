@@ -8,10 +8,12 @@ import android.bluetooth.le.ScanFilter
 import android.bluetooth.le.ScanResult
 import android.bluetooth.le.ScanSettings
 import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.ParcelUuid
+import android.provider.OpenableColumns
 import android.provider.Settings
 import android.view.View
 import android.widget.ArrayAdapter
@@ -27,8 +29,8 @@ import es.navegador.esp32.databinding.ActivityMainBinding
 import kotlinx.coroutines.launch
 
 /**
- * Pantalla principal: estado de la conexión con la placa, navegación actual,
- * permisos y acceso al registro.
+ * Pantalla principal: estado de la conexión con la placa, actualización del firmware,
+ * navegación actual, permisos y acceso al registro.
  */
 class MainActivity : AppCompatActivity() {
 
@@ -49,6 +51,12 @@ class MainActivity : AppCompatActivity() {
                 startServiceIfPaired()
             }
             scanWhenPermissionGranted = false
+        }
+
+    /** Selector de archivos para elegir el .bin del firmware. */
+    private val firmwareFilePicker =
+        registerForActivityResult(ActivityResultContracts.OpenDocument()) { file ->
+            if (file != null) confirmFirmwareUpdate(file)
         }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -93,6 +101,15 @@ class MainActivity : AppCompatActivity() {
             startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
         }
         binding.btnLog.setOnClickListener { startActivity(Intent(this, LogActivity::class.java)) }
+        binding.btnPermBattery.setOnClickListener { askToIgnoreBatteryOptimizations() }
+        binding.btnFirmware.setOnClickListener {
+            when {
+                Hub.firmwareUpdateRunning.value -> Unit // ya hay una en marcha
+                Hub.connection.value != ConnectionState.CONNECTED -> showToast(getString(R.string.no_conectada))
+                // Los .bin no tienen un tipo propio: se aceptan binarios genéricos y cualquier archivo.
+                else -> firmwareFilePicker.launch(arrayOf("application/octet-stream", "*/*"))
+            }
+        }
     }
 
     /** Actualiza la pantalla cada vez que cambia algo en [Hub], mientras está visible. */
@@ -106,6 +123,15 @@ class MainActivity : AppCompatActivity() {
                         binding.txtTime.text = if (time == null) getString(R.string.hora_no_enviada)
                         else getString(R.string.hora_enviada, time)
                     }
+                }
+                launch {
+                    Hub.firmwareUpdateStatus.collect { status ->
+                        binding.txtFirmware.text = status.orEmpty()
+                        binding.txtFirmware.visibility = if (status == null) View.GONE else View.VISIBLE
+                    }
+                }
+                launch {
+                    Hub.firmwareUpdateRunning.collect { running -> binding.btnFirmware.isEnabled = !running }
                 }
                 launch {
                     Hub.testActive.collect { active ->
@@ -167,6 +193,40 @@ class MainActivity : AppCompatActivity() {
         val hasNotificationAccess = Perms.hasNotificationAccess(this)
         binding.txtPermNotif.setText(if (hasNotificationAccess) R.string.perm_notif_ok else R.string.perm_notif_falta)
         binding.btnPermNotif.visibility = if (hasNotificationAccess) View.GONE else View.VISIBLE
+
+        val ignoresBatterySaving = Perms.isIgnoringBatteryOptimizations(this)
+        binding.txtPermBattery.setText(if (ignoresBatterySaving) R.string.perm_bateria_ok else R.string.perm_bateria_falta)
+        binding.btnPermBattery.visibility = if (ignoresBatterySaving) View.GONE else View.VISIBLE
+    }
+
+    /** Muestra el diálogo del sistema para excluir la app del ahorro de batería. */
+    @SuppressLint("BatteryLife") // la app debe seguir conectada a la placa con la pantalla apagada
+    private fun askToIgnoreBatteryOptimizations() {
+        val request = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$packageName"))
+        runCatching { startActivity(request) }
+            .onFailure { startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)) }
+    }
+
+    // ---------------------------------------------------------------- actualización del firmware
+
+    /** Pide confirmación con el nombre y el tamaño del archivo antes de enviarlo. */
+    private fun confirmFirmwareUpdate(file: Uri) {
+        var name = file.lastPathSegment ?: "firmware.bin"
+        var sizeBytes = 0L
+        contentResolver.query(file, null, null, null, null)?.use { cursor ->
+            if (cursor.moveToFirst()) {
+                val nameColumn = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                val sizeColumn = cursor.getColumnIndex(OpenableColumns.SIZE)
+                if (nameColumn >= 0) name = cursor.getString(nameColumn)
+                if (sizeColumn >= 0) sizeBytes = cursor.getLong(sizeColumn)
+            }
+        }
+        MaterialAlertDialogBuilder(this)
+            .setTitle(R.string.actualizar_firmware)
+            .setMessage(getString(R.string.confirmar_actualizacion, name, (sizeBytes / 1024).toInt()))
+            .setPositiveButton(R.string.actualizar) { _, _ -> Hub.requestFirmwareUpdate(file) }
+            .setNegativeButton(R.string.cancelar, null)
+            .show()
     }
 
     // ---------------------------------------------------------------- ruta de prueba

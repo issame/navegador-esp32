@@ -14,6 +14,17 @@
 #define COLOR_DIA_SEMANA 0x5DCAA5
 #define COLOR_BLUETOOTH_CONECTADO 0x378ADD
 #define COLOR_BLUETOOTH_DESCONECTADO 0x5F5E5A
+#define COLOR_ARCO_FONDO 0x2C2C2A
+#define COLOR_ARCO_PROGRESO 0x1D9E75
+#define COLOR_AVISO 0xEF9F27
+
+// ------------------------------------------------------------------ arco de progreso
+
+// El arco ocupa el borde de la pantalla redonda.
+#define DIAMETRO_ARCO 236
+#define GROSOR_ARCO 6
+#define ESCALA_ARCO 1000 // el arco va de 0 a 1000 (fracción recorrida x 1000)
+#define PERIODO_PARPADEO_MS 500
 
 // ------------------------------------------------------------------ flecha
 
@@ -44,6 +55,12 @@ static lv_obj_t *etiquetaTiempoYDistancia;
 static lv_obj_t *lienzoFlecha;
 static lv_obj_t *etiquetaDistanciaManiobra;
 static lv_obj_t *etiquetaIndicacion;
+static lv_obj_t *arcoProgreso;
+static bool avisoActivo = false;
+
+static lv_obj_t *pantallaActualizacion;
+static lv_obj_t *etiquetaActualizacion;
+static lv_obj_t *barraActualizacion;
 
 // Lo último que se pintó en el reloj, para no redibujar si no cambia nada.
 static bool relojPintado = false;
@@ -125,12 +142,51 @@ static void crearPantallaNavegacion()
   lv_obj_set_height(etiquetaIndicacion, 42);
   lv_label_set_long_mode(etiquetaIndicacion, LV_LABEL_LONG_DOT);
   lv_obj_align(etiquetaIndicacion, LV_ALIGN_TOP_MID, 0, 178);
+
+  // Borde: arco que se completa al acercarse a la maniobra. Empieza arriba (270°) y
+  // avanza en el sentido de las agujas del reloj. Solo se muestra, no se puede tocar.
+  arcoProgreso = lv_arc_create(pantallaNavegacion);
+  lv_obj_set_size(arcoProgreso, DIAMETRO_ARCO, DIAMETRO_ARCO);
+  lv_obj_center(arcoProgreso);
+  lv_arc_set_rotation(arcoProgreso, 270);
+  lv_arc_set_bg_angles(arcoProgreso, 0, 360);
+  lv_arc_set_range(arcoProgreso, 0, ESCALA_ARCO);
+  lv_arc_set_value(arcoProgreso, 0);
+  lv_obj_remove_style(arcoProgreso, NULL, LV_PART_KNOB);
+  lv_obj_remove_flag(arcoProgreso, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_set_style_arc_width(arcoProgreso, GROSOR_ARCO, LV_PART_MAIN);
+  lv_obj_set_style_arc_color(arcoProgreso, lv_color_hex(COLOR_ARCO_FONDO), LV_PART_MAIN);
+  lv_obj_set_style_arc_width(arcoProgreso, GROSOR_ARCO, LV_PART_INDICATOR);
+  lv_obj_set_style_arc_color(arcoProgreso, lv_color_hex(COLOR_ARCO_PROGRESO), LV_PART_INDICATOR);
+  lv_obj_add_flag(arcoProgreso, LV_OBJ_FLAG_HIDDEN);
+}
+
+static void crearPantallaActualizacion()
+{
+  pantallaActualizacion = crearPantallaVacia();
+
+  lv_obj_t *titulo = crearEtiqueta(pantallaActualizacion, &fuente_es_20, COLOR_TEXTO);
+  lv_label_set_text(titulo, "Actualizando\nfirmware");
+  lv_obj_align(titulo, LV_ALIGN_CENTER, 0, -40);
+
+  barraActualizacion = lv_bar_create(pantallaActualizacion);
+  lv_obj_set_size(barraActualizacion, 160, 10);
+  lv_obj_align(barraActualizacion, LV_ALIGN_CENTER, 0, 10);
+  lv_bar_set_range(barraActualizacion, 0, 100);
+  lv_obj_set_style_bg_color(barraActualizacion, lv_color_hex(COLOR_ARCO_FONDO), LV_PART_MAIN);
+  lv_obj_set_style_bg_color(barraActualizacion, lv_color_hex(COLOR_ARCO_PROGRESO), LV_PART_INDICATOR);
+
+  etiquetaActualizacion = crearEtiqueta(pantallaActualizacion, &fuente_es_16, COLOR_TEXTO_SECUNDARIO);
+  lv_obj_set_width(etiquetaActualizacion, 180);
+  lv_label_set_long_mode(etiquetaActualizacion, LV_LABEL_LONG_WRAP);
+  lv_obj_align(etiquetaActualizacion, LV_ALIGN_CENTER, 0, 46);
 }
 
 void ui_init()
 {
   crearPantallaReloj();
   crearPantallaNavegacion();
+  crearPantallaActualizacion();
   ui_actualizar_reloj(false, 0, 0, 0, 1, 1);
   lv_screen_load(pantallaReloj);
 }
@@ -236,4 +292,73 @@ void ui_mostrar_flecha(const uint8_t *bitsFlecha)
   }
   lv_obj_remove_flag(lienzoFlecha, LV_OBJ_FLAG_HIDDEN);
   lv_obj_invalidate(lienzoFlecha); // avisar a LVGL de que hay que redibujarla
+}
+
+// ------------------------------------------------------------------ progreso y aviso de maniobra
+
+// Animación de parpadeo: cambia la opacidad del arco.
+static void cambiarOpacidadArco(void *arco, int32_t opacidad)
+{
+  lv_obj_set_style_arc_opa((lv_obj_t *)arco, (lv_opa_t)opacidad, LV_PART_INDICATOR);
+}
+
+static void activarAviso(bool activar)
+{
+  if (activar == avisoActivo)
+    return;
+  avisoActivo = activar;
+
+  uint32_t colorArco = activar ? COLOR_AVISO : COLOR_ARCO_PROGRESO;
+  lv_obj_set_style_arc_color(arcoProgreso, lv_color_hex(colorArco), LV_PART_INDICATOR);
+  lv_obj_set_style_text_color(etiquetaDistanciaManiobra, lv_color_hex(activar ? COLOR_AVISO : COLOR_TEXTO), 0);
+
+  lv_anim_delete(arcoProgreso, cambiarOpacidadArco);
+  if (activar)
+  {
+    lv_anim_t parpadeo;
+    lv_anim_init(&parpadeo);
+    lv_anim_set_var(&parpadeo, arcoProgreso);
+    lv_anim_set_exec_cb(&parpadeo, cambiarOpacidadArco);
+    lv_anim_set_values(&parpadeo, LV_OPA_COVER, LV_OPA_20);
+    lv_anim_set_duration(&parpadeo, PERIODO_PARPADEO_MS);
+    lv_anim_set_reverse_duration(&parpadeo, PERIODO_PARPADEO_MS);
+    lv_anim_set_repeat_count(&parpadeo, LV_ANIM_REPEAT_INFINITE);
+    lv_anim_start(&parpadeo);
+  }
+  else
+  {
+    cambiarOpacidadArco(arcoProgreso, LV_OPA_COVER);
+  }
+}
+
+void ui_mostrar_progreso_maniobra(float fraccionRecorrida, bool aviso)
+{
+  if (fraccionRecorrida < 0)
+  {
+    lv_obj_add_flag(arcoProgreso, LV_OBJ_FLAG_HIDDEN);
+    activarAviso(false);
+    return;
+  }
+  if (fraccionRecorrida > 1)
+    fraccionRecorrida = 1;
+  lv_arc_set_value(arcoProgreso, (int32_t)(fraccionRecorrida * ESCALA_ARCO));
+  lv_obj_remove_flag(arcoProgreso, LV_OBJ_FLAG_HIDDEN);
+  activarAviso(aviso);
+}
+
+// ------------------------------------------------------------------ actualización del firmware
+
+void ui_mostrar_actualizacion(int porcentaje)
+{
+  lv_bar_set_value(barraActualizacion, porcentaje, LV_ANIM_OFF);
+  lv_label_set_text_fmt(etiquetaActualizacion, "%d %%\nNo desconectes el móvil", porcentaje);
+  if (lv_screen_active() != pantallaActualizacion)
+    lv_screen_load(pantallaActualizacion);
+}
+
+void ui_mostrar_error_actualizacion(int codigoError)
+{
+  lv_label_set_text_fmt(etiquetaActualizacion, "Error %d\nEl firmware anterior sigue instalado", codigoError);
+  if (lv_screen_active() != pantallaActualizacion)
+    lv_screen_load(pantallaActualizacion);
 }
