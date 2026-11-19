@@ -16,6 +16,7 @@
 #include "ui.h"
 #include "ota.h"
 #include "distancia.h"
+#include "version.h"
 
 static PantallaRedonda pantalla;
 
@@ -252,7 +253,7 @@ static void actualizarReloj()
 void setup()
 {
   Serial.begin(115200);
-  Serial.println("Navegador ESP32: arrancando");
+  Serial.println("Navegador ESP32 v" VERSION_FIRMWARE ": arrancando");
 
   pantalla.init();
   pantalla.initDMA();

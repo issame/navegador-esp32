@@ -11,7 +11,8 @@ Android propia por Bluetooth LE.
 
 ### Pantalla (placa ESP32-C3)
 
-- **Pantalla de arranque** con un icono de mapa plegado y un marcador (2 s).
+- **Pantalla de arranque** con un icono de mapa plegado y un marcador, y la versión del
+  firmware debajo (2 s).
 - **Reloj** con la hora en grande, el día de la semana y la fecha en castellano
   ("miércoles", "19 de noviembre"). Muestra `--:--` y "Conecta el móvil" hasta recibir la hora.
 - **Icono de Bluetooth** en el reloj: gris sin conexión, azul con el móvil conectado.
@@ -124,6 +125,7 @@ LVGL 9 (la comprobación `LV_VERSION_CHECK(8, 0, 0)` del archivo generado es fal
 | `src/distancia.h` | Convierte "250 m", "1,2 km", "0.3 mi"… a metros |
 | `src/arranque.hpp` | Icono del mapa de la pantalla de arranque |
 | `src/pantalla.hpp` | Pines y configuración del panel GC9A01 |
+| `src/version.h` | Versión del firmware (se ve en el arranque) |
 | `src/fuentes/` | Fuentes con caracteres de castellano y catalán |
 | `partitions.csv` | Tabla de particiones con dos huecos de aplicación |
 

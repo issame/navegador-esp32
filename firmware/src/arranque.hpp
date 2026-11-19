@@ -4,6 +4,7 @@
 // de iniciar LVGL.
 
 #include "pantalla.hpp"
+#include "version.h"
 
 namespace arranque
 {
@@ -55,10 +56,15 @@ namespace arranque
                           aPantallaX(60), aPantallaY(55), rojo);
     pantalla.fillCircle(aPantallaX(60), aPantallaY(27), aPantallaRadio(7), TFT_WHITE);
 
-    // Nombre debajo del icono.
+    // Nombre y versión debajo del icono.
     pantalla.setTextColor(gris);
     pantalla.setTextDatum(textdatum_t::top_center);
     pantalla.setFont(&fonts::FreeSans9pt7b);
     pantalla.drawString("Navegador", ANCHO_PANTALLA / 2, 196);
+
+    const uint32_t grisOscuro = pantalla.color888(0x88, 0x87, 0x80);
+    pantalla.setTextColor(grisOscuro);
+    pantalla.setFont(&fonts::Font2); // fuente pequeña integrada (16 px)
+    pantalla.drawString("v" VERSION_FIRMWARE, ANCHO_PANTALLA / 2, 218);
   }
 }
