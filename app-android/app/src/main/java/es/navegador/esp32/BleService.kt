@@ -25,6 +25,7 @@ import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -88,7 +89,15 @@ class BleService : Service() {
         }
     }
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    /**
+     * Si algo falla de forma inesperada en una tarea del servicio, se anota en el registro
+     * en lugar de cerrar la app; la conexión y el resto de tareas siguen funcionando.
+     */
+    private val errorHandler = CoroutineExceptionHandler { _, error ->
+        Hub.log("Error inesperado: ${error::class.simpleName}: ${error.message}")
+    }
+
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate + errorHandler)
 
     /** Trozos pendientes de escribir; BLE solo admite una escritura a la vez. */
     private val pendingWrites = Channel<ByteArray>(Channel.UNLIMITED)
@@ -385,7 +394,7 @@ class BleService : Service() {
         // Durante una actualización la placa solo atiende al firmware nuevo; al reiniciarse
         // se reconecta y se le reenvía todo.
         if (!isReady || Hub.firmwareUpdateRunning.value) return
-        Protocol.split(packet, negotiatedMtu - 3).forEach { pendingWrites.trySend(it) }
+        Protocol.split(packet, Protocol.maxWriteBytes(negotiatedMtu)).forEach { pendingWrites.trySend(it) }
     }
 
     /** Escribe un trozo de la cola de datos (hora y navegación). */
@@ -404,7 +413,10 @@ class BleService : Service() {
             if (!isReady || gatt == null) return@withLock false
             val confirmation = CompletableDeferred<Boolean>()
             writeConfirmation = confirmation
-            if (!startWrite(gatt, characteristic, data)) {
+            val started = runCatching { startWrite(gatt, characteristic, data) }
+                .onFailure { Hub.log("Error al escribir ${data.size} B: ${it.message}") }
+                .getOrDefault(false)
+            if (!started) {
                 Hub.log("No se pudo enviar un paquete (${data.size} B)")
                 return@withLock false
             }
@@ -448,6 +460,10 @@ class BleService : Service() {
         currentGatt?.requestConnectionPriority(BluetoothGatt.CONNECTION_PRIORITY_HIGH) // más rápido
         try {
             sendFirmware(firmware, control, data)
+        } catch (error: Exception) {
+            if (error is kotlinx.coroutines.CancellationException) throw error
+            reportUpdate("Error inesperado (${error.message}). La placa sigue con el firmware anterior.")
+            runCatching { writeAndWait(control, byteArrayOf(FirmwareUpdateProtocol.COMMAND_CANCEL.toByte())) }
         } finally {
             Hub.setFirmwareUpdateRunning(false)
             currentGatt?.requestConnectionPriority(BluetoothGatt.CONNECTION_PRIORITY_BALANCED)
@@ -475,8 +491,8 @@ class BleService : Service() {
             return
         }
 
-        // El archivo en trozos del tamaño máximo que admite la conexión.
-        val chunkBytes = negotiatedMtu - 3
+        // El archivo en trozos del tamaño máximo que admite la conexión (512 bytes como mucho).
+        val chunkBytes = Protocol.maxWriteBytes(negotiatedMtu)
         var offset = 0
         var lastPercent = -1
         while (offset < firmware.size) {

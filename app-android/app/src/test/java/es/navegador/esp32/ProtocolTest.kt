@@ -92,4 +92,12 @@ class ProtocolTest {
         assertEquals("Peña", Protocol.truncateUtf8("Peña", 40))
         assertEquals("ab…", Protocol.truncateUtf8("abcdefgh", 5))
     }
+
+    @Test
+    fun maxWriteBytes_neverExceedsAndroidLimit() {
+        // Con la MTU máxima (517) quedarían 514 bytes, pero Android solo admite 512.
+        assertEquals(512, Protocol.maxWriteBytes(517))
+        assertEquals(244, Protocol.maxWriteBytes(247))
+        assertEquals(20, Protocol.maxWriteBytes(23))
+    }
 }

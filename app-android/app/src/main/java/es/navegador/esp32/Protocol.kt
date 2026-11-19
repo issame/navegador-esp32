@@ -35,6 +35,15 @@ object Protocol {
     private const val NAVIGATION_ACTIVE = 0x80
     private const val NAVIGATION_INACTIVE = 0x00
 
+    /**
+     * Android no deja escribir más de 512 bytes de una vez en una característica BLE (límite
+     * del estándar), aunque la MTU negociada permita más: lanza IllegalArgumentException.
+     */
+    const val MAX_BLE_WRITE_BYTES = 512
+
+    /** Bytes que caben en una escritura con la MTU negociada, sin pasar del límite de Android. */
+    fun maxWriteBytes(negotiatedMtu: Int): Int = minOf(negotiatedMtu - 3, MAX_BLE_WRITE_BYTES)
+
     /** Tamaño del primer trozo de un paquete troceado y de los datos de los siguientes. */
     private const val FIRST_CHUNK_BYTES = 20
     private const val NEXT_CHUNK_DATA_BYTES = 19
