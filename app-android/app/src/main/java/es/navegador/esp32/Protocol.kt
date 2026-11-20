@@ -31,6 +31,14 @@ object Protocol {
     private const val COMMAND_TIME = 0x93
     private const val COMMAND_NAVIGATION = 0xEF
     private const val COMMAND_NAVIGATION_ICON = 0xEE
+    private const val COMMAND_PHONE_BATTERY = 0x91
+
+    /**
+     * Título con el que se avisa a la placa de la llegada al destino: una navegación
+     * "informativa" (sin maniobra) con este título. Debe coincidir con MARCA_LLEGADA del
+     * firmware (main.cpp).
+     */
+    const val ARRIVAL_MARKER = "Has llegado"
 
     private const val NAVIGATION_ACTIVE = 0x80
     private const val NAVIGATION_INACTIVE = 0x00
@@ -72,6 +80,7 @@ object Protocol {
      * @param iconCrc identifica la flecha actual; la placa solo la redibuja si cambia.
      */
     fun navigationPacket(nav: NavInfo, iconCrc: Long): ByteArray {
+        if (nav.arrived) return arrivalPacket()
         val body = ByteArrayOutputStream()
         body.write(NAVIGATION_ACTIVE)
         body.write(if (nav.icon != null) 1 else 0) // ¿hay flecha?
@@ -90,6 +99,27 @@ object Protocol {
         }
         return packet(COMMAND_NAVIGATION, body.toByteArray())
     }
+
+    /** Aviso de llegada: navegación informativa (sin maniobra ni flecha) titulada [ARRIVAL_MARKER]. */
+    private fun arrivalPacket(): ByteArray {
+        val body = ByteArrayOutputStream()
+        body.write(NAVIGATION_ACTIVE)
+        body.write(0) // sin flecha
+        body.write(0) // 0 = información, no navegación con maniobras
+        writeUInt32(body, 0xFFFFFFFFL)
+        listOf(ARRIVAL_MARKER, "", "", "", "", "").forEach { text ->
+            body.write(text.toByteArray(Charsets.UTF_8))
+            body.write(0)
+        }
+        return packet(COMMAND_NAVIGATION, body.toByteArray())
+    }
+
+    /**
+     * Batería del móvil (comando 0x91): `00`, cargando (1/0) y porcentaje.
+     * La placa la muestra junto al icono de Bluetooth.
+     */
+    fun phoneBatteryPacket(percent: Int, charging: Boolean): ByteArray =
+        packet(COMMAND_PHONE_BATTERY, bytesOf(0x00, if (charging) 1 else 0, percent.coerceIn(0, 100)))
 
     /**
      * Paquetes con la flecha de la maniobra (comando 0xEE): 3 trozos de 96 bytes.

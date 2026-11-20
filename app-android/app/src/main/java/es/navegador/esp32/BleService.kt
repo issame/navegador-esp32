@@ -20,6 +20,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.ServiceInfo
 import android.net.Uri
+import android.os.BatteryManager
 import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
@@ -48,7 +49,8 @@ import java.util.UUID
 /**
  * Servicio en primer plano que mantiene la conexión BLE con la placa y le envía:
  *  - la fecha y la hora al conectar, cada hora y cuando cambia la hora del móvil;
- *  - la navegación cada vez que cambia [Hub.nav];
+ *  - la navegación cada vez que cambia [Hub.nav] (y el aviso de llegada);
+ *  - la batería del móvil al conectar y cuando cambia;
  *  - el firmware nuevo cuando el usuario elige actualizarla ([FirmwareUpdateProtocol]).
  *
  * Si se pierde la conexión, se reconecta solo. Todo el trabajo se hace en el hilo
@@ -125,6 +127,10 @@ class BleService : Service() {
     private var reconnectAttempts = 0
     private var reconnectJob: Job? = null
 
+    /** Última batería del móvil leída (porcentaje y si carga), para enviarla solo si cambia. */
+    private var phoneBatteryPercent = -1
+    private var phoneCharging = false
+
     /** CRC de la última flecha enviada, para no reenviarla si no cambia. */
     private var lastSentIconCrc: Long? = null
 
@@ -136,6 +142,23 @@ class BleService : Service() {
         override fun onReceive(context: Context, intent: Intent) {
             Hub.log("Cambio de hora en el móvil")
             sendTime()
+        }
+    }
+
+    /** Android avisa cada vez que cambia la batería (nivel o cargador). */
+    private val batteryReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            val level = intent.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
+            val scale = intent.getIntExtra(BatteryManager.EXTRA_SCALE, 100)
+            if (level < 0 || scale <= 0) return
+            val percent = level * 100 / scale
+            val status = intent.getIntExtra(BatteryManager.EXTRA_STATUS, -1)
+            val charging = status == BatteryManager.BATTERY_STATUS_CHARGING ||
+                status == BatteryManager.BATTERY_STATUS_FULL
+            if (percent == phoneBatteryPercent && charging == phoneCharging) return
+            phoneBatteryPercent = percent
+            phoneCharging = charging
+            sendPhoneBattery()
         }
     }
 
@@ -152,6 +175,13 @@ class BleService : Service() {
                 addAction(Intent.ACTION_TIME_CHANGED)
                 addAction(Intent.ACTION_TIMEZONE_CHANGED)
             },
+            ContextCompat.RECEIVER_NOT_EXPORTED,
+        )
+        // Es un aviso "pegajoso": al registrarlo llega enseguida el estado actual.
+        ContextCompat.registerReceiver(
+            this,
+            batteryReceiver,
+            IntentFilter(Intent.ACTION_BATTERY_CHANGED),
             ContextCompat.RECEIVER_NOT_EXPORTED,
         )
         scope.launch { for (chunk in pendingWrites) writeChunk(chunk) }
@@ -177,6 +207,7 @@ class BleService : Service() {
         isStopping = true
         scope.cancel()
         runCatching { unregisterReceiver(timeChangeReceiver) }
+        runCatching { unregisterReceiver(batteryReceiver) }
         currentGatt?.let {
             it.disconnect()
             it.close()
@@ -336,6 +367,7 @@ class BleService : Service() {
             else "Pantalla lista"
         )
         sendTime()
+        sendPhoneBattery()
         sendNavigation(Hub.nav.value)
     }
 
@@ -369,8 +401,20 @@ class BleService : Service() {
         Hub.log("→ hora $formatted")
     }
 
+    private fun sendPhoneBattery() {
+        if (!isReady || phoneBatteryPercent < 0) return
+        enqueue(Protocol.phoneBatteryPacket(phoneBatteryPercent, phoneCharging))
+        Hub.log("→ batería del móvil $phoneBatteryPercent %" + if (phoneCharging) " (cargando)" else "")
+    }
+
     private fun sendNavigation(nav: NavInfo) {
         if (!isReady) return
+        if (nav.arrived) {
+            enqueue(Protocol.navigationPacket(nav, 0xFFFFFFFFL))
+            lastSentIconCrc = null
+            Hub.log("→ has llegado")
+            return
+        }
         if (!nav.active) {
             enqueue(Protocol.navigationEndedPacket())
             lastSentIconCrc = null

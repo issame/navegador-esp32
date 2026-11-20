@@ -15,7 +15,16 @@ Android propia por Bluetooth LE.
   firmware debajo (2 s).
 - **Reloj** con la hora en grande, el día de la semana y la fecha en castellano
   ("miércoles", "19 de noviembre"). Muestra `--:--` y "Conecta el móvil" hasta recibir la hora.
-- **Icono de Bluetooth** en el reloj: gris sin conexión, azul con el móvil conectado.
+- **Icono de Bluetooth** en el reloj: gris sin conexión, azul con el móvil conectado, y a
+  su lado la **batería del móvil** (porcentaje, rayo si carga, naranja por debajo del 15 %).
+- **Pantalla de Brillo**: se abre deslizando a la izquierda desde el reloj o la navegación y
+  se cierra deslizando a la derecha (o sola a los 10 s sin tocarla). Brillo **manual** con la
+  rueda del borde o − / + (10–100 %), o **automático** según la hora (10 % de 22:00 a 7:00,
+  sube hasta el 100 % a las 9:00 y baja desde las 19:00, sin saltos). Casilla **Modo ahorro**
+  (CPU a 80 MHz, lo mínimo con Bluetooth). Los ajustes se guardan en la placa.
+- **Modo noche** de 22:00 a 7:00: los textos blancos pasan a ámbar suave.
+- **"Has llegado"**: al llegar al destino se muestra una bandera con la hora unos segundos
+  (si se cancela la ruta, vuelve directamente al reloj).
 - **Navegación automática**: al empezar una ruta cambia sola a la pantalla de navegación y,
   al terminar (o si se pierde la conexión), vuelve al reloj.
 - **Pantalla de navegación**:
@@ -77,6 +86,10 @@ Si no caben en una escritura se trocean en 20 bytes + trozos de `índice + 19 by
 | `0x93` | Hora: año (2 bytes), mes, día, hora, minuto, segundo |
 | `0xEF` | Navegación: estado (`00` inactiva / `80` activa), hay icono, CRC del icono y 6 textos terminados en 0 (distancia a la maniobra, duración, distancia, llegada, indicación, velocidad) |
 | `0xEE` | Flecha 48×48 a 1 bit, en 3 trozos de 96 bytes |
+| `0x91` | Batería del móvil: cargando (1/0) y porcentaje |
+
+La llegada al destino se avisa con una navegación informativa (sin maniobra) cuyo título es
+"Has llegado".
 
 Los tests de la app (`app-android/app/src/test`) incluyen una copia en Kotlin del código
 de recepción de la librería para comprobar los paquetes byte a byte.
@@ -122,9 +135,10 @@ LVGL 9 (la comprobación `LV_VERSION_CHECK(8, 0, 0)` del archivo generado es fal
 | `src/main.cpp` | Arranque, conexión BLE, progreso de la maniobra y bucle principal |
 | `src/ui.cpp` | Pantallas de reloj, navegación (con arco y aviso) y actualización (LVGL) |
 | `src/ota.cpp` | Actualización del firmware por Bluetooth |
+| `src/ajustes.cpp` | Brillo manual/automático, modo ahorro y horario del modo noche (guardados en la placa) |
 | `src/distancia.h` | Convierte "250 m", "1,2 km", "0.3 mi"… a metros |
 | `src/arranque.hpp` | Icono del mapa de la pantalla de arranque |
-| `src/pantalla.hpp` | Pines y configuración del panel GC9A01 |
+| `src/pantalla.hpp` | Pines y configuración del panel GC9A01 y del táctil CST816S |
 | `src/version.h` | Versión del firmware (se ve en el arranque) |
 | `src/fuentes/` | Fuentes con caracteres de castellano y catalán |
 | `partitions.csv` | Tabla de particiones con dos huecos de aplicación |
@@ -160,6 +174,7 @@ Al abrirla por primera vez:
 | `NotificationParser.kt` | Saca distancia, indicación, tiempo, distancia restante y llegada de sus textos |
 | `InstructionShortener.kt` | Acorta y abrevia las indicaciones para la pantalla |
 | `IconConverter.kt`, `IconBits.kt` | Convierten la flecha a 48×48 a 1 bit |
+| `ArrivalDetector.kt` | Distingue la llegada al destino de una ruta cancelada |
 | `Protocol.kt` | Construye y trocea los paquetes BLE de hora y navegación |
 | `FirmwareUpdateProtocol.kt` | Órdenes, comprobaciones y estados de la actualización del firmware |
 | `BleService.kt` | Mantiene la conexión con la placa y envía hora, navegación y firmware |

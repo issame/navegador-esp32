@@ -1,10 +1,10 @@
 // Navegador ESP32
 //
-// Reloj e indicaciones de Google Maps en la placa ESP32-C3 con pantalla redonda de 1,28".
+// Reloj e indicaciones de Google Maps u OsmAnd en la placa ESP32-C3 con pantalla redonda de 1,28".
 // La app Android "Navegador ESP32" envía la hora y la navegación por Bluetooth LE usando
 // el protocolo de la librería ChronosESP32, que se encarga de recibir y decodificar los
-// paquetes. Este archivo une las piezas: pantalla (LovyanGFX), interfaz (LVGL), BLE y
-// actualización del firmware por Bluetooth (ota.cpp).
+// paquetes. Este archivo une las piezas: pantalla y táctil (LovyanGFX), interfaz (LVGL),
+// BLE, ajustes de brillo (ajustes.cpp) y actualización del firmware por Bluetooth (ota.cpp).
 
 #include <Arduino.h>
 #include <ChronosESP32.h>
@@ -17,6 +17,7 @@
 #include "ota.h"
 #include "distancia.h"
 #include "version.h"
+#include "ajustes.h"
 
 static PantallaRedonda pantalla;
 
@@ -33,7 +34,6 @@ static const uint32_t LINEAS_POR_BUFFER = 40;
 static uint16_t bufferDibujo1[ANCHO_PANTALLA * LINEAS_POR_BUFFER];
 static uint16_t bufferDibujo2[ANCHO_PANTALLA * LINEAS_POR_BUFFER];
 
-static const uint8_t BRILLO_PANTALLA = 200; // 0 … 255
 static const uint32_t DURACION_ARRANQUE_MS = 2000;
 static const uint32_t INTERVALO_RELOJ_MS = 500;
 
@@ -43,6 +43,12 @@ static const float DISTANCIA_AVISO_METROS = 100;
 // Tiempo que se deja ver un error de actualización antes de volver al reloj.
 static const uint32_t DURACION_ERROR_ACTUALIZACION_MS = 5000;
 
+// Tiempo que se ve la pantalla de "Has llegado".
+static const uint32_t DURACION_LLEGADA_MS = 4000;
+
+// La app avisa de la llegada con una navegación "informativa" cuyo título es este texto.
+static const char *MARCA_LLEGADA = "Has llegado";
+
 // La librería BLE llama a sus funciones de aviso desde otra tarea. Ahí solo se activan
 // estas banderas; el trabajo con LVGL (que no admite varias tareas) se hace en loop().
 static volatile bool hayCambioDeConexion = false;
@@ -50,6 +56,9 @@ static volatile bool movilConectado = false;
 static volatile bool hayNavegacionNueva = false;
 static volatile bool hayFlechaNueva = false;
 static volatile bool horaSincronizada = false;
+static volatile bool hayBateriaNueva = false;
+static volatile int bateriaMovil = 0;
+static volatile bool movilCargando = false;
 
 static uint32_t crcFlechaMostrada = 0xFFFFFFFF; // para no redibujar la misma flecha
 static uint32_t ultimaActualizacionReloj = 0;
@@ -58,6 +67,12 @@ static uint32_t ultimaActualizacionReloj = 0;
 // se recuerda la distancia a la que empezó y se compara con la que queda.
 static String indicacionDelTramo;
 static float distanciaInicialDelTramo = -1;
+
+// Brillo aplicado ahora mismo (%), para no tocar la retroiluminación si no cambia.
+static int brilloAplicado = -1;
+
+// Momento en que se mostró "Has llegado" (0 = no se está mostrando).
+static uint32_t momentoLlegada = 0;
 
 // Lo último mostrado de la actualización por Bluetooth.
 static int porcentajeActualizacionMostrado = -1;
@@ -91,6 +106,22 @@ static void ajustarZonaACoordenadasPares(lv_event_t *evento)
 
 static uint32_t milisegundosDesdeArranque() { return millis(); }
 
+// LVGL pregunta por el táctil: se le pasa si hay un dedo y dónde.
+static void leerTactil(lv_indev_t *dispositivo, lv_indev_data_t *datos)
+{
+  uint16_t x, y;
+  if (pantalla.getTouch(&x, &y))
+  {
+    datos->state = LV_INDEV_STATE_PRESSED;
+    datos->point.x = x;
+    datos->point.y = y;
+  }
+  else
+  {
+    datos->state = LV_INDEV_STATE_RELEASED;
+  }
+}
+
 static void iniciarLvgl()
 {
   lv_init();
@@ -101,6 +132,28 @@ static void iniciarLvgl()
   lv_display_set_buffers(display, bufferDibujo1, bufferDibujo2, sizeof(bufferDibujo1),
                          LV_DISPLAY_RENDER_MODE_PARTIAL);
   lv_display_add_event_cb(display, ajustarZonaACoordenadasPares, LV_EVENT_INVALIDATE_AREA, NULL);
+
+  lv_indev_t *tactil = lv_indev_create();
+  lv_indev_set_type(tactil, LV_INDEV_TYPE_POINTER);
+  lv_indev_set_read_cb(tactil, leerTactil);
+}
+
+// ------------------------------------------------------------------ brillo y modo noche
+
+// Aplica el brillo que toca (manual o automático según la hora) y el modo noche.
+// Se llama cada medio segundo y cuando el usuario cambia algo en la pantalla de brillo.
+static void aplicarBrilloYModoNoche()
+{
+  int hora = horaSincronizada ? enlaceMovil.getHour(true) : 12;
+  int minuto = horaSincronizada ? enlaceMovil.getMinute() : 0;
+  int brillo = ajustes::brilloActual(horaSincronizada, hora, minuto);
+  if (brillo != brilloAplicado)
+  {
+    brilloAplicado = brillo;
+    pantalla.setBrightness(brillo * 255 / 100);
+  }
+  bool deNoche = horaSincronizada && ajustes::esDeNoche(hora);
+  ui_refrescar_brillo(brillo, deNoche);
 }
 
 // ------------------------------------------------------------------ avisos de la librería BLE
@@ -126,6 +179,11 @@ static void alRecibirDatos(Config tipo, uint32_t valorA, uint32_t valorB)
   case CF_NAV_ICON:
     if (valorA == 2) // la flecha llega en 3 trozos (0, 1, 2): este es el último
       hayFlechaNueva = true;
+    break;
+  case CF_PBAT: // batería del móvil: valorA = cargando (1/0), valorB = porcentaje
+    movilCargando = valorA == 1;
+    bateriaMovil = (int)valorB;
+    hayBateriaNueva = true;
     break;
   default:
     break; // el resto de datos de Chronos (clima, notificaciones…) no se usan
@@ -160,20 +218,41 @@ static void actualizarProgresoManiobra(const String &distanciaManiobra, const St
   ui_mostrar_progreso_maniobra(fraccionRecorrida, maniobraInminente);
 }
 
+// Borra lo que se recordaba de la ruta (flecha, tramo y arco) al terminar.
+static void olvidarRuta()
+{
+  crcFlechaMostrada = 0xFFFFFFFF;
+  indicacionDelTramo = "";
+  distanciaInicialDelTramo = -1;
+  ui_mostrar_flecha(nullptr);
+  ui_mostrar_progreso_maniobra(-1, false);
+}
+
 static void mostrarNavegacionRecibida()
 {
   Navigation navegacion = enlaceMovil.getNavigation(); // copia: la tarea BLE puede cambiarla
   if (!navegacion.active)
   {
     Serial.println("Navegación terminada");
-    crcFlechaMostrada = 0xFFFFFFFF;
-    indicacionDelTramo = "";
-    distanciaInicialDelTramo = -1;
-    ui_mostrar_flecha(nullptr);
-    ui_mostrar_progreso_maniobra(-1, false);
-    ui_volver_al_reloj();
+    olvidarRuta();
+    // Si se está mostrando "Has llegado", se vuelve al reloj cuando termine su tiempo.
+    if (momentoLlegada == 0)
+      ui_volver_al_reloj();
     return;
   }
+
+  // Llegada al destino: la app la avisa con una navegación informativa "Has llegado".
+  if (!navegacion.isNavigation && navegacion.title == MARCA_LLEGADA)
+  {
+    Serial.println("Llegada al destino");
+    olvidarRuta();
+    ui_mostrar_llegada(enlaceMovil.getHour(true), enlaceMovil.getMinute());
+    momentoLlegada = millis();
+    if (momentoLlegada == 0)
+      momentoLlegada = 1; // 0 significa "sin llegada"
+    return;
+  }
+  momentoLlegada = 0; // empieza otra ruta
 
   String distanciaManiobra = navegacion.title;
   String indicacion = navegacion.directions;
@@ -255,10 +334,14 @@ void setup()
   Serial.begin(115200);
   Serial.println("Navegador ESP32 v" VERSION_FIRMWARE ": arrancando");
 
+  // Ajustes guardados (brillo y modo ahorro, que fija la velocidad de la CPU).
+  ajustes::cargar();
+
   pantalla.init();
   pantalla.initDMA();
   pantalla.startWrite();
-  pantalla.setBrightness(BRILLO_PANTALLA);
+  // Aún no se sabe la hora: se arranca con el brillo manual guardado.
+  pantalla.setBrightness(ajustes::brilloManual() * 255 / 100);
   arranque::dibujar(pantalla);
   uint32_t inicioArranque = millis();
 
@@ -275,8 +358,9 @@ void setup()
   Serial.printf("BLE: %s\n", enlaceMovil.getAddress().c_str());
 
   iniciarLvgl();
-  ui_init();
+  ui_init(aplicarBrilloYModoNoche);
   ui_mostrar_conexion(false);
+  aplicarBrilloYModoNoche();
 
   // Completar los 2 s de la pantalla de arranque sin desatender el Bluetooth.
   while (millis() - inicioArranque < DURACION_ARRANQUE_MS)
@@ -296,6 +380,11 @@ void loop()
     hayCambioDeConexion = false;
     Serial.println(movilConectado ? "Móvil conectado" : "Móvil desconectado");
     ui_mostrar_conexion(movilConectado);
+  }
+  if (hayBateriaNueva)
+  {
+    hayBateriaNueva = false;
+    ui_mostrar_bateria_movil(bateriaMovil, movilCargando);
   }
   atenderActualizacion();
   if (ota::enCurso())
@@ -320,7 +409,14 @@ void loop()
   {
     ultimaActualizacionReloj = millis();
     actualizarReloj();
+    aplicarBrilloYModoNoche();
   }
+  if (momentoLlegada != 0 && millis() - momentoLlegada > DURACION_LLEGADA_MS)
+  {
+    momentoLlegada = 0;
+    ui_volver_al_reloj();
+  }
+  ui_atender(); // vuelta automática desde la pantalla de brillo
 
   delay(5);
 }

@@ -1,7 +1,7 @@
 #pragma once
 // Controlador de la pantalla redonda GC9A01 (240x240) de la placa ESP32-C3 de 1,28".
 // Configuración tomada del firmware esp32-c3-mini de Felix Biego (entorno lolin_c3_mini).
-// El táctil (CST816S, I2C en los pines 4 y 5) no se usa: esta pantalla solo muestra datos.
+// Incluye el táctil CST816S (I2C), que se usa para los gestos y la pantalla de Brillo.
 
 #define LGFX_USE_V1
 #include <Arduino.h>
@@ -17,11 +17,19 @@
 #define PIN_SELECCION 10    // CS
 #define PIN_RETROILUMINACION 3
 
+// Táctil CST816S
+#define PIN_TACTIL_SDA 4
+#define PIN_TACTIL_SCL 5
+#define PIN_TACTIL_AVISO 0    // INT: avisa cuando hay un toque
+#define PIN_TACTIL_REINICIO 1 // RST
+#define DIRECCION_I2C_TACTIL 0x15
+
 class PantallaRedonda : public lgfx::LGFX_Device
 {
   lgfx::Panel_GC9A01 panel;
   lgfx::Light_PWM retroiluminacion;
   lgfx::Bus_SPI busSpi;
+  lgfx::Touch_CST816S tactil;
 
 public:
   PantallaRedonda()
@@ -73,6 +81,25 @@ public:
       cfg.pwm_channel = 1;
       retroiluminacion.config(cfg);
       panel.setLight(&retroiluminacion);
+    }
+    // Táctil por I2C, con las mismas coordenadas que la pantalla
+    {
+      auto cfg = tactil.config();
+      cfg.x_min = 0;
+      cfg.x_max = ANCHO_PANTALLA;
+      cfg.y_min = 0;
+      cfg.y_max = ALTO_PANTALLA;
+      cfg.pin_int = PIN_TACTIL_AVISO;
+      cfg.pin_rst = PIN_TACTIL_REINICIO;
+      cfg.bus_shared = true;
+      cfg.offset_rotation = 0;
+      cfg.i2c_port = 0;
+      cfg.i2c_addr = DIRECCION_I2C_TACTIL;
+      cfg.pin_sda = PIN_TACTIL_SDA;
+      cfg.pin_scl = PIN_TACTIL_SCL;
+      cfg.freq = 400000;
+      tactil.config(cfg);
+      panel.setTouch(&tactil);
     }
     setPanel(&panel);
   }

@@ -4,6 +4,8 @@ import android.app.Notification
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.drawable.Drawable
+import android.os.Handler
+import android.os.Looper
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import android.view.View
@@ -29,6 +31,9 @@ class NavigationListener : NotificationListenerService() {
     )
 
     companion object {
+        /** Tiempo que la placa muestra "Has llegado" antes de volver al reloj. */
+        private const val ARRIVAL_SCREEN_MS = 4_500L
+
         // Waze no se incluye: su notificación solo indica que está en marcha, sin indicaciones.
         // "net.osmand.plus" es también el paquete de OsmAnd~ (la versión de F-Droid).
         private val SUPPORTED_APPS = mapOf(
@@ -67,8 +72,19 @@ class NavigationListener : NotificationListenerService() {
         val appName = SUPPORTED_APPS[statusBarNotification.packageName]?.name ?: "?"
         activeNotificationKey = null
         lastLoggedTexts = null
-        Hub.log("$appName: navegación terminada")
-        Hub.setNav(NavInfo.INACTIVE)
+
+        // ¿Llegada o cancelación? Si es llegada, la placa muestra "Has llegado" unos
+        // segundos y después se termina la navegación (salvo que empiece otra ruta).
+        if (ArrivalDetector.isArrival(Hub.nav.value)) {
+            Hub.log("$appName: has llegado al destino")
+            Hub.setNav(NavInfo.ARRIVED)
+            Handler(Looper.getMainLooper()).postDelayed({
+                if (Hub.nav.value.arrived) Hub.setNav(NavInfo.INACTIVE)
+            }, ARRIVAL_SCREEN_MS)
+        } else {
+            Hub.log("$appName: navegación terminada")
+            Hub.setNav(NavInfo.INACTIVE)
+        }
     }
 
     private fun readNavigationNotification(statusBarNotification: StatusBarNotification) {

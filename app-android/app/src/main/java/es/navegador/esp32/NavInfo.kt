@@ -15,6 +15,8 @@ data class NavInfo(
     val eta: String = "",
     /** Flecha de la maniobra: 48x48 a 1 bit por píxel (288 bytes), o null. */
     val icon: ByteArray? = null,
+    /** La ruta ha terminado porque se ha llegado al destino (la placa muestra "Has llegado"). */
+    val arrived: Boolean = false,
 ) {
     /** Línea resumen: "Llegada 14:51 · 19 min · 8,4 km". */
     val summary: String
@@ -33,7 +35,8 @@ data class NavInfo(
             duration == other.duration &&
             distance == other.distance &&
             eta == other.eta &&
-            iconEquals(icon, other.icon)
+            iconEquals(icon, other.icon) &&
+            arrived == other.arrived
     }
 
     override fun hashCode(): Int {
@@ -43,12 +46,16 @@ data class NavInfo(
         h = 31 * h + duration.hashCode()
         h = 31 * h + distance.hashCode()
         h = 31 * h + eta.hashCode()
+        h = 31 * h + arrived.hashCode()
         h = 31 * h + (icon?.contentHashCode() ?: 0)
         return h
     }
 
     companion object {
         val INACTIVE = NavInfo(active = false)
+
+        /** Aviso de llegada al destino. */
+        val ARRIVED = NavInfo(active = true, arrived = true)
 
         private fun iconEquals(a: ByteArray?, b: ByteArray?): Boolean =
             if (a == null || b == null) a === b else a.contentEquals(b)

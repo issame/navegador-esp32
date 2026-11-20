@@ -17,6 +17,8 @@ class ChronosLibrarySim {
     val icon = ByteArray(288)
     val iconParts = mutableListOf<Int>()
     var packets = 0
+    var phoneCharging = false
+    var phoneBattery = -1
 
     private fun u(i: Int) = data[i].toInt() and 0xFF
 
@@ -44,6 +46,10 @@ class ChronosLibrarySim {
         if (u(0) != 0xAB) return
         when (u(4)) {
             0x93 -> time = intArrayOf(u(13), u(12), u(11), u(10), u(9), u(7) * 256 + u(8))
+            0x91 -> if (u(3) == 0xFE) {
+                phoneCharging = u(6) == 1
+                phoneBattery = u(7)
+            }
             0xEE -> if (u(3) == 0xFE) {
                 val pos = u(6)
                 navCrc = (u(7).toLong() shl 24) or (u(8).toLong() shl 16) or (u(9).toLong() shl 8) or u(10).toLong()

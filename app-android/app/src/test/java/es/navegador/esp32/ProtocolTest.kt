@@ -100,4 +100,25 @@ class ProtocolTest {
         assertEquals(244, Protocol.maxWriteBytes(247))
         assertEquals(20, Protocol.maxWriteBytes(23))
     }
+
+    @Test
+    fun phoneBatteryPacket_decodes() {
+        val sim = ChronosLibrarySim()
+        send(sim, Protocol.phoneBatteryPacket(85, charging = true), 23)
+        assertEquals(85, sim.phoneBattery)
+        assertTrue(sim.phoneCharging)
+        send(sim, Protocol.phoneBatteryPacket(14, charging = false), 23)
+        assertEquals(14, sim.phoneBattery)
+        assertFalse(sim.phoneCharging)
+    }
+
+    @Test
+    fun arrivalPacket_isInformationWithMarkerTitle() {
+        val sim = ChronosLibrarySim()
+        send(sim, Protocol.navigationPacket(NavInfo.ARRIVED, 0xFFFFFFFFL), 23)
+        assertTrue(sim.navActive)
+        assertFalse(sim.navIsNavigation)
+        assertFalse(sim.navHasIcon)
+        assertEquals(Protocol.ARRIVAL_MARKER, sim.navStrings[0])
+    }
 }
