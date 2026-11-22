@@ -75,7 +75,8 @@ object Protocol {
      *
      * Después de la cabecera van 6 textos UTF-8 terminados en 0, en este orden:
      * distancia a la maniobra, duración, distancia restante, hora de llegada,
-     * indicación y velocidad (esta última no se usa y va vacía).
+     * indicación ("acción\ndestino") y velocidad. La velocidad no se usa, así que en ese
+     * campo va el tipo de maniobra (TL, RNDB2…) para la flecha vectorial de la placa.
      *
      * @param iconCrc identifica la flecha actual; la placa solo la redibuja si cambia.
      */
@@ -92,7 +93,7 @@ object Protocol {
             truncateUtf8(nav.distance, MAX_SHORT_TEXT_BYTES),
             truncateUtf8(nav.eta, MAX_SHORT_TEXT_BYTES),
             truncateUtf8(nav.instruction, MAX_INSTRUCTION_BYTES),
-            "", // velocidad
+            truncateUtf8(nav.maneuver, MAX_SHORT_TEXT_BYTES), // campo "velocidad": tipo de maniobra
         ).forEach { text ->
             body.write(text.toByteArray(Charsets.UTF_8))
             body.write(0)

@@ -5,6 +5,8 @@
 
 #include "ui.h"
 #include "ajustes.h"
+#include "flechas.h"
+#include <math.h>
 
 // ------------------------------------------------------------------ colores
 
@@ -21,6 +23,9 @@
 #define COLOR_SOL 0xFAC775
 #define COLOR_LUNA 0x85B7EB
 #define COLOR_ACTIVADO 0x1D9E75
+#define COLOR_VIAJE 0x85B7EB
+#define COLOR_SEGUNDOS 0x5DCAA5
+#define COLOR_SEGUNDOS_FONDO 0x1F1F1E
 
 // Modo noche: los blancos y grises de texto pasan a tonos ámbar.
 #define COLOR_TEXTO_NOCHE 0xFAC775
@@ -28,9 +33,11 @@
 
 // ------------------------------------------------------------------ medidas
 
-// Arco de progreso de la maniobra, en el borde de la pantalla.
-#define DIAMETRO_ARCO 236
-#define GROSOR_ARCO 6
+// Arcos de la navegación: el exterior es la maniobra y el interior (más fino) el viaje.
+#define DIAMETRO_ARCO 237
+#define GROSOR_ARCO 5
+#define DIAMETRO_ARCO_VIAJE 219
+#define GROSOR_ARCO_VIAJE 3
 #define ESCALA_ARCO 1000 // el arco va de 0 a 1000 (fracción recorrida x 1000)
 #define PERIODO_PARPADEO_MS 500
 
@@ -38,12 +45,25 @@
 #define DIAMETRO_RUEDA 226
 #define GROSOR_RUEDA 10
 
-// Indicación: con distancia a la maniobra va debajo de ella y tiene 2 líneas. Sin
-// distancia, sube a su hueco y tiene hasta 4 líneas. La flecha no se mueve nunca.
-#define ANCHO_INDICACION 176
-#define ALTURA_LINEA 20
-#define Y_INDICACION_CON_DISTANCIA 178
-#define Y_INDICACION_SIN_DISTANCIA 150
+// Zona segura: todo el texto de la navegación cabe dentro de este radio, sin tocar los
+// arcos del borde. El ancho de cada línea se calcula según su altura (el círculo se
+// estrecha arriba y abajo).
+#define CENTRO_PANTALLA 120
+#define RADIO_ZONA_SEGURA 104
+
+// Posiciones de la pantalla de navegación (coordenada y de la parte de arriba).
+#define Y_LLEGADA 30
+#define Y_INDICACION_CON_DISTANCIA 150
+#define Y_INDICACION_SIN_DISTANCIA 142
+#define ALTURA_LINEA_GRANDE 24 // indicación a 20 px
+#define ALTURA_LINEA_PEQUENA 20 // indicación a 16 px
+
+// Con distancia, la flecha va a la izquierda del centro y la distancia a su derecha.
+// Sin distancia, la flecha va centrada un poco más arriba.
+#define CENTRO_X_FLECHA_EN_FILA 74
+#define CENTRO_Y_FLECHA_EN_FILA 100
+#define CENTRO_Y_FLECHA_CENTRADA 92
+#define X_DISTANCIA 118
 
 // La flecha llega a 48x48 y se amplía a 72x72 (x1,5) para verla bien de un vistazo.
 // Solo se muestran las flechas que manda la app de navegación: la última se conserva
@@ -56,8 +76,12 @@
 
 #define DURACION_FUNDIDO_MS 300
 
-// Lienzo de 1 bit por píxel (paleta: 0 = negro, 1 = color del texto) para la flecha.
+// Lienzo de 1 bit por píxel (paleta: 0 = negro, 1 = color del texto) para la flecha que
+// manda la app; se usa cuando la maniobra no tiene flecha vectorial propia.
 LV_DRAW_BUF_DEFINE_STATIC(bufferFlecha, LADO_FLECHA_EN_PANTALLA, LADO_FLECHA_EN_PANTALLA, LV_COLOR_FORMAT_I1);
+
+// Lienzo en color para las flechas vectoriales (flechas.cpp).
+LV_DRAW_BUF_DEFINE_STATIC(bufferFlechaVectorial, LADO_FLECHA_VECTORIAL, LADO_FLECHA_VECTORIAL, LV_COLOR_FORMAT_RGB565);
 
 // ------------------------------------------------------------------ textos
 
@@ -74,14 +98,21 @@ static lv_obj_t *etiquetaPorcentajeBateria;
 static lv_obj_t *etiquetaHora;
 static lv_obj_t *etiquetaDiaSemana;
 static lv_obj_t *etiquetaFecha;
+static lv_obj_t *arcoSegundos;
 
 static lv_obj_t *pantallaNavegacion;
 static lv_obj_t *etiquetaLlegada;
-static lv_obj_t *etiquetaTiempoYDistancia;
-static lv_obj_t *lienzoFlecha;
-static lv_obj_t *etiquetaDistanciaManiobra;
-static lv_obj_t *etiquetaIndicacion;
+static lv_obj_t *lienzoFlecha;          // flecha de la app (1 bit)
+static lv_obj_t *lienzoFlechaVectorial; // flecha propia
+static lv_obj_t *etiquetaNumeroSalida;  // número de salida dentro de la rotonda
+static lv_obj_t *filaDistancia;
+static lv_obj_t *etiquetaNumeroDistancia; // "250" o "Ahora", en grande
+static lv_obj_t *etiquetaUnidadDistancia; // "m", "km"
+static lv_obj_t *etiquetaAccion;          // indicación a 20 px, primera línea
+static lv_obj_t *etiquetaDestino;         // indicación a 20 px, segunda línea
+static lv_obj_t *etiquetaIndicacion;      // indicación a 16 px, una o varias líneas
 static lv_obj_t *arcoProgreso;
+static lv_obj_t *arcoViaje;
 
 static lv_obj_t *pantallaBrillo;
 static lv_obj_t *etiquetaTituloBrillo;
@@ -98,6 +129,7 @@ static lv_obj_t *casillaAhorro;
 static lv_obj_t *pantallaLlegada;
 static lv_obj_t *etiquetaHasLlegado;
 static lv_obj_t *etiquetaHoraLlegada;
+static lv_obj_t *etiquetaResumenViaje;
 
 static lv_obj_t *pantallaActualizacion;
 static lv_obj_t *etiquetaActualizacion;
@@ -114,6 +146,11 @@ static bool avisoActivo = false;
 static bool modoNoche = false;
 static bool movilConectado = false;
 static int brilloMostrado = -1;
+
+// Flecha de la maniobra actual: código de la flecha vectorial y si hay flecha de la app.
+static String maniobraDibujada;
+static bool maniobraConFlechaPropia = false;
+static bool hayFlechaDeLaApp = false;
 
 // Lo último que se pintó en el reloj, para no redibujar si no cambia nada.
 static bool relojPintado = false;
@@ -172,12 +209,121 @@ static lv_obj_t *crearPuntosDePagina(lv_obj_t *pantalla, int paginaActiva)
   return puntoEncendido;
 }
 
-static void colocarIndicacion(bool hayDistancia)
+// Ancho que cabe dentro de la zona segura para una franja de texto entre yArriba y yAbajo.
+static int anchoDisponible(int yArriba, int yAbajo)
 {
-  int lineas = hayDistancia ? 2 : 4;
-  lv_obj_set_height(etiquetaIndicacion, lineas * ALTURA_LINEA + 2);
-  lv_obj_align(etiquetaIndicacion, LV_ALIGN_TOP_MID, 0,
-               hayDistancia ? Y_INDICACION_CON_DISTANCIA : Y_INDICACION_SIN_DISTANCIA);
+  int distanciaAlCentro = max(abs(yArriba - CENTRO_PANTALLA), abs(yAbajo - CENTRO_PANTALLA));
+  if (distanciaAlCentro >= RADIO_ZONA_SEGURA)
+    return 0;
+  return (int)(2 * sqrtf((float)(RADIO_ZONA_SEGURA * RADIO_ZONA_SEGURA - distanciaAlCentro * distanciaAlCentro))) - 4;
+}
+
+static int anchoDeTexto(const String &texto, const lv_font_t *fuente)
+{
+  lv_point_t tamano;
+  lv_text_get_size(&tamano, texto.c_str(), fuente, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+  return tamano.x;
+}
+
+static int lineasQueOcupa(const String &texto, const lv_font_t *fuente, int ancho)
+{
+  lv_point_t tamano;
+  lv_text_get_size(&tamano, texto.c_str(), fuente, 0, 0, ancho, LV_TEXT_FLAG_NONE);
+  return (tamano.y + lv_font_get_line_height(fuente) / 2) / lv_font_get_line_height(fuente);
+}
+
+// Coloca la indicación desde yInicio. La app la manda como "acción\ndestino":
+//  1. si la acción y el destino caben cada uno en una línea a 20 px, van así (la acción en
+//     el color del texto y el destino en gris claro);
+//  2. si no, todo junto a 16 px ("acción · destino") en 2 líneas (3 sin distancia);
+//  3. en las rotondas con nombre ("Pl. Espanya: 4.ª salida"), si no cabe se quita el nombre.
+static void colocarIndicacion(const String &indicacion, int yInicio, int lineasMaximas)
+{
+  int salto = indicacion.indexOf('\n');
+  String accion = salto >= 0 ? indicacion.substring(0, salto) : indicacion;
+  String destino = salto >= 0 ? indicacion.substring(salto + 1) : String("");
+  int separadorLugar = accion.indexOf(": ");
+  String accionSinLugar = separadorLugar >= 0 ? accion.substring(separadorLugar + 2) : accion;
+
+  int anchoLinea1 = anchoDisponible(yInicio, yInicio + ALTURA_LINEA_GRANDE);
+  int anchoLinea2 = anchoDisponible(yInicio + ALTURA_LINEA_GRANDE, yInicio + 2 * ALTURA_LINEA_GRANDE);
+
+  // 1. Dos líneas grandes, primero con el nombre de la rotonda y luego sin él.
+  for (const String &opcion : {accion, accionSinLugar})
+  {
+    bool cabeAccion = anchoDeTexto(opcion, &fuente_es_20) <= anchoLinea1;
+    bool cabeDestino = destino.length() == 0 || anchoDeTexto(destino, &fuente_es_20) <= anchoLinea2;
+    if (cabeAccion && cabeDestino)
+    {
+      lv_label_set_text(etiquetaAccion, opcion.c_str());
+      lv_label_set_text(etiquetaDestino, destino.c_str());
+      lv_obj_align(etiquetaAccion, LV_ALIGN_TOP_MID, 0, yInicio);
+      lv_obj_align(etiquetaDestino, LV_ALIGN_TOP_MID, 0, yInicio + ALTURA_LINEA_GRANDE);
+      lv_obj_remove_flag(etiquetaAccion, LV_OBJ_FLAG_HIDDEN);
+      lv_obj_remove_flag(etiquetaDestino, LV_OBJ_FLAG_HIDDEN);
+      lv_obj_add_flag(etiquetaIndicacion, LV_OBJ_FLAG_HIDDEN);
+      return;
+    }
+  }
+
+  // 2. Todo junto a 16 px. El ancho es el de la línea más estrecha (la de abajo).
+  int ancho = anchoDisponible(yInicio, yInicio + lineasMaximas * ALTURA_LINEA_PEQUENA);
+  String completo = destino.length() > 0 ? accion + " · " + destino : accion;
+  if (separadorLugar >= 0 && lineasQueOcupa(completo, &fuente_es_16, ancho) > lineasMaximas)
+    completo = destino.length() > 0 ? accionSinLugar + " · " + destino : accionSinLugar; // 3.
+  lv_label_set_text(etiquetaIndicacion, completo.c_str());
+  lv_obj_set_width(etiquetaIndicacion, ancho);
+  lv_obj_set_height(etiquetaIndicacion, lineasMaximas * ALTURA_LINEA_PEQUENA + 2);
+  lv_obj_align(etiquetaIndicacion, LV_ALIGN_TOP_MID, 0, yInicio);
+  lv_obj_remove_flag(etiquetaIndicacion, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_add_flag(etiquetaAccion, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_add_flag(etiquetaDestino, LV_OBJ_FLAG_HIDDEN);
+}
+
+// Pone la flecha (vectorial o la de la app) centrada en (centroX, centroY).
+static void colocarFlecha(int centroX, int centroY)
+{
+  lv_obj_set_pos(lienzoFlechaVectorial, centroX - LADO_FLECHA_VECTORIAL / 2, centroY - LADO_FLECHA_VECTORIAL / 2);
+  lv_obj_set_pos(lienzoFlecha, centroX - LADO_FLECHA_EN_PANTALLA / 2, centroY - LADO_FLECHA_EN_PANTALLA / 2);
+  lv_obj_align_to(etiquetaNumeroSalida, lienzoFlechaVectorial, LV_ALIGN_CENTER, 0, 0);
+}
+
+// Muestra la flecha vectorial si la maniobra tiene una; si no, la de la app (si ha llegado).
+static void mostrarFlechaAdecuada()
+{
+  if (maniobraConFlechaPropia)
+  {
+    lv_obj_remove_flag(lienzoFlechaVectorial, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(lienzoFlecha, LV_OBJ_FLAG_HIDDEN);
+  }
+  else
+  {
+    lv_obj_add_flag(lienzoFlechaVectorial, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(etiquetaNumeroSalida, LV_OBJ_FLAG_HIDDEN);
+    if (hayFlechaDeLaApp)
+      lv_obj_remove_flag(lienzoFlecha, LV_OBJ_FLAG_HIDDEN);
+    else
+      lv_obj_add_flag(lienzoFlecha, LV_OBJ_FLAG_HIDDEN);
+  }
+}
+
+// Dibuja la flecha vectorial de `maniobra` en el color actual del texto.
+static void dibujarFlechaVectorial(const String &maniobra)
+{
+  maniobraDibujada = maniobra;
+  int numeroSalida = 0;
+  maniobraConFlechaPropia = flechas_dibujar(lienzoFlechaVectorial, maniobra.c_str(),
+                                            lv_color_hex(colorTexto()), &numeroSalida);
+  if (maniobraConFlechaPropia && numeroSalida > 0)
+  {
+    lv_label_set_text_fmt(etiquetaNumeroSalida, "%d", numeroSalida);
+    lv_obj_remove_flag(etiquetaNumeroSalida, LV_OBJ_FLAG_HIDDEN);
+  }
+  else
+  {
+    lv_obj_add_flag(etiquetaNumeroSalida, LV_OBJ_FLAG_HIDDEN);
+  }
+  mostrarFlechaAdecuada();
 }
 
 // ------------------------------------------------------------------ cambio de pantalla
@@ -260,59 +406,98 @@ static void crearPantallaReloj()
   etiquetaFecha = crearEtiqueta(pantallaReloj, &fuente_es_20, COLOR_FECHA);
   lv_obj_align(etiquetaFecha, LV_ALIGN_CENTER, 0, 62);
 
+  // Borde: anillo fino que avanza con los segundos (se dibuja una vez por segundo, sin
+  // animación, para gastar poco).
+  arcoSegundos = lv_arc_create(pantallaReloj);
+  lv_obj_set_size(arcoSegundos, DIAMETRO_ARCO, DIAMETRO_ARCO);
+  lv_obj_center(arcoSegundos);
+  lv_arc_set_rotation(arcoSegundos, 270);
+  lv_arc_set_bg_angles(arcoSegundos, 0, 360);
+  lv_arc_set_range(arcoSegundos, 0, 60);
+  lv_arc_set_value(arcoSegundos, 0);
+  lv_obj_remove_style(arcoSegundos, NULL, LV_PART_KNOB);
+  lv_obj_remove_flag(arcoSegundos, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_set_style_arc_width(arcoSegundos, 3, LV_PART_MAIN);
+  lv_obj_set_style_arc_color(arcoSegundos, lv_color_hex(COLOR_SEGUNDOS_FONDO), LV_PART_MAIN);
+  lv_obj_set_style_arc_width(arcoSegundos, 3, LV_PART_INDICATOR);
+  lv_obj_set_style_arc_color(arcoSegundos, lv_color_hex(COLOR_SEGUNDOS), LV_PART_INDICATOR);
+  lv_obj_add_flag(arcoSegundos, LV_OBJ_FLAG_HIDDEN);
+
   puntoActivoReloj = crearPuntosDePagina(pantallaReloj, 0);
   lv_obj_add_event_cb(pantallaReloj, alHacerGesto, LV_EVENT_GESTURE, NULL);
 }
 
 // ------------------------------------------------------------------ pantalla de navegación
 
+static lv_obj_t *crearArcoDeBorde(lv_obj_t *pantalla, int diametro, int grosor, uint32_t color)
+{
+  lv_obj_t *arco = lv_arc_create(pantalla);
+  lv_obj_set_size(arco, diametro, diametro);
+  lv_obj_center(arco);
+  lv_arc_set_rotation(arco, 270); // empieza arriba y avanza en el sentido de las agujas
+  lv_arc_set_bg_angles(arco, 0, 360);
+  lv_arc_set_range(arco, 0, ESCALA_ARCO);
+  lv_arc_set_value(arco, 0);
+  lv_obj_remove_style(arco, NULL, LV_PART_KNOB);
+  lv_obj_remove_flag(arco, LV_OBJ_FLAG_CLICKABLE); // solo se muestra, no se puede tocar
+  lv_obj_set_style_arc_width(arco, grosor, LV_PART_MAIN);
+  lv_obj_set_style_arc_color(arco, lv_color_hex(COLOR_ARCO_FONDO), LV_PART_MAIN);
+  lv_obj_set_style_arc_width(arco, grosor, LV_PART_INDICATOR);
+  lv_obj_set_style_arc_color(arco, lv_color_hex(color), LV_PART_INDICATOR);
+  lv_obj_set_style_arc_rounded(arco, true, LV_PART_INDICATOR);
+  lv_obj_add_flag(arco, LV_OBJ_FLAG_HIDDEN);
+  return arco;
+}
+
 static void crearPantallaNavegacion()
 {
   pantallaNavegacion = crearPantallaVacia();
 
-  // Arriba: hora de llegada y, debajo, tiempo y distancia restantes.
+  // Borde: arco exterior = progreso hasta la maniobra; interior = progreso del viaje.
+  arcoProgreso = crearArcoDeBorde(pantallaNavegacion, DIAMETRO_ARCO, GROSOR_ARCO, COLOR_ARCO_PROGRESO);
+  arcoViaje = crearArcoDeBorde(pantallaNavegacion, DIAMETRO_ARCO_VIAJE, GROSOR_ARCO_VIAJE, COLOR_VIAJE);
+
+  // Arriba: hora de llegada (y tiempo restante si se conoce), en una línea corta.
   etiquetaLlegada = crearEtiqueta(pantallaNavegacion, &fuente_es_16, COLOR_TEXTO_SECUNDARIO);
-  lv_obj_align(etiquetaLlegada, LV_ALIGN_TOP_MID, 0, 26);
+  lv_obj_align(etiquetaLlegada, LV_ALIGN_TOP_MID, 0, Y_LLEGADA);
 
-  etiquetaTiempoYDistancia = crearEtiqueta(pantallaNavegacion, &fuente_es_16, COLOR_TEXTO_SECUNDARIO);
-  lv_obj_align(etiquetaTiempoYDistancia, LV_ALIGN_TOP_MID, 0, 46);
-
-  // Centro: flecha de la maniobra sobre negro. Oculta hasta que llegue una.
+  // Flecha de la app (1 bit, ampliada a 72 px). Se usa si la maniobra no tiene flecha propia.
   LV_DRAW_BUF_INIT_STATIC(bufferFlecha);
   lienzoFlecha = lv_canvas_create(pantallaNavegacion);
   lv_canvas_set_draw_buf(lienzoFlecha, &bufferFlecha);
   lv_canvas_set_palette(lienzoFlecha, 0, lv_color32_make(0, 0, 0, 255));
   lv_canvas_set_palette(lienzoFlecha, 1, lv_color32_make(255, 255, 255, 255));
-  lv_obj_align(lienzoFlecha, LV_ALIGN_TOP_MID, 0, 70);
   lv_obj_add_flag(lienzoFlecha, LV_OBJ_FLAG_HIDDEN);
 
-  // Distancia a la maniobra, en grande.
-  etiquetaDistanciaManiobra = crearEtiqueta(pantallaNavegacion, &fuente_es_28, COLOR_TEXTO);
-  lv_obj_align(etiquetaDistanciaManiobra, LV_ALIGN_TOP_MID, 0, 144);
+  // Flecha vectorial propia (80 px) y, encima, el número de salida de las rotondas.
+  LV_DRAW_BUF_INIT_STATIC(bufferFlechaVectorial);
+  lienzoFlechaVectorial = lv_canvas_create(pantallaNavegacion);
+  lv_canvas_set_draw_buf(lienzoFlechaVectorial, &bufferFlechaVectorial);
+  lv_canvas_fill_bg(lienzoFlechaVectorial, lv_color_black(), LV_OPA_COVER);
+  lv_obj_add_flag(lienzoFlechaVectorial, LV_OBJ_FLAG_HIDDEN);
+  etiquetaNumeroSalida = crearEtiqueta(pantallaNavegacion, &fuente_es_16, COLOR_TEXTO);
+  lv_obj_add_flag(etiquetaNumeroSalida, LV_OBJ_FLAG_HIDDEN);
 
-  // Indicación: 176 px de ancho (con "…" si no cabe) para que no se corte por los bordes
-  // del círculo. Su posición y altura dependen de si hay distancia (colocarIndicacion).
+  // Distancia a la maniobra: número grande y unidad pequeña ("250" "m"), en una fila.
+  filaDistancia = lv_obj_create(pantallaNavegacion);
+  lv_obj_remove_style_all(filaDistancia);
+  lv_obj_set_size(filaDistancia, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+  lv_obj_set_flex_flow(filaDistancia, LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(filaDistancia, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_END);
+  lv_obj_set_style_pad_column(filaDistancia, 4, 0);
+  lv_obj_remove_flag(filaDistancia, LV_OBJ_FLAG_CLICKABLE);
+  etiquetaNumeroDistancia = crearEtiqueta(filaDistancia, &fuente_distancia_40, COLOR_TEXTO);
+  etiquetaUnidadDistancia = crearEtiqueta(filaDistancia, &fuente_es_20, COLOR_TEXTO_SECUNDARIO);
+  lv_obj_set_style_pad_bottom(etiquetaUnidadDistancia, 5, 0); // alinea la unidad con la base del número
+  lv_obj_align(filaDistancia, LV_ALIGN_LEFT_MID, X_DISTANCIA, CENTRO_Y_FLECHA_EN_FILA - CENTRO_PANTALLA);
+
+  // Indicación: dos etiquetas a 20 px (acción y destino) o una a 16 px (ver colocarIndicacion).
+  etiquetaAccion = crearEtiqueta(pantallaNavegacion, &fuente_es_20, COLOR_TEXTO);
+  etiquetaDestino = crearEtiqueta(pantallaNavegacion, &fuente_es_20, COLOR_FECHA);
   etiquetaIndicacion = crearEtiqueta(pantallaNavegacion, &fuente_es_16, COLOR_TEXTO);
-  lv_obj_set_width(etiquetaIndicacion, ANCHO_INDICACION);
   lv_label_set_long_mode(etiquetaIndicacion, LV_LABEL_LONG_DOT);
-  colocarIndicacion(true);
 
-  // Borde: arco que se completa al acercarse a la maniobra. Empieza arriba (270°) y
-  // avanza en el sentido de las agujas del reloj. Solo se muestra, no se puede tocar.
-  arcoProgreso = lv_arc_create(pantallaNavegacion);
-  lv_obj_set_size(arcoProgreso, DIAMETRO_ARCO, DIAMETRO_ARCO);
-  lv_obj_center(arcoProgreso);
-  lv_arc_set_rotation(arcoProgreso, 270);
-  lv_arc_set_bg_angles(arcoProgreso, 0, 360);
-  lv_arc_set_range(arcoProgreso, 0, ESCALA_ARCO);
-  lv_arc_set_value(arcoProgreso, 0);
-  lv_obj_remove_style(arcoProgreso, NULL, LV_PART_KNOB);
-  lv_obj_remove_flag(arcoProgreso, LV_OBJ_FLAG_CLICKABLE);
-  lv_obj_set_style_arc_width(arcoProgreso, GROSOR_ARCO, LV_PART_MAIN);
-  lv_obj_set_style_arc_color(arcoProgreso, lv_color_hex(COLOR_ARCO_FONDO), LV_PART_MAIN);
-  lv_obj_set_style_arc_width(arcoProgreso, GROSOR_ARCO, LV_PART_INDICATOR);
-  lv_obj_set_style_arc_color(arcoProgreso, lv_color_hex(COLOR_ARCO_PROGRESO), LV_PART_INDICATOR);
-  lv_obj_add_flag(arcoProgreso, LV_OBJ_FLAG_HIDDEN);
+  colocarFlecha(CENTRO_X_FLECHA_EN_FILA, CENTRO_Y_FLECHA_EN_FILA);
 
   puntoActivoNavegacion = crearPuntosDePagina(pantallaNavegacion, 0);
   lv_obj_add_event_cb(pantallaNavegacion, alHacerGesto, LV_EVENT_GESTURE, NULL);
@@ -517,13 +702,18 @@ static void crearPantallaLlegada()
   lv_obj_align(etiquetaHasLlegado, LV_ALIGN_TOP_MID, 0, 124);
 
   etiquetaHoraLlegada = crearEtiqueta(pantallaLlegada, &fuente_es_20, COLOR_TEXTO_SECUNDARIO);
-  lv_obj_align(etiquetaHoraLlegada, LV_ALIGN_TOP_MID, 0, 162);
+  lv_obj_align(etiquetaHoraLlegada, LV_ALIGN_TOP_MID, 0, 158);
+
+  // Resumen del viaje: "24 min · 9,0 km".
+  etiquetaResumenViaje = crearEtiqueta(pantallaLlegada, &fuente_es_16, COLOR_FECHA);
+  lv_obj_align(etiquetaResumenViaje, LV_ALIGN_TOP_MID, 0, 184);
 }
 
-void ui_mostrar_llegada(int hora, int minuto)
+void ui_mostrar_llegada(int hora, int minuto, const String &resumenViaje)
 {
   navegacionActiva = false;
   lv_label_set_text_fmt(etiquetaHoraLlegada, "%02d:%02d", hora, minuto);
+  lv_label_set_text(etiquetaResumenViaje, resumenViaje.c_str());
   // Si se está en el brillo, no se interrumpe: al salir se irá al reloj.
   if (lv_screen_active() != pantallaBrillo)
     cargarPantalla(pantallaLlegada, LV_SCR_LOAD_ANIM_FADE_IN);
@@ -605,6 +795,7 @@ void ui_actualizar_reloj(bool horaSincronizada, int hora, int minuto, int diaSem
 
   if (!horaSincronizada)
   {
+    lv_obj_add_flag(arcoSegundos, LV_OBJ_FLAG_HIDDEN);
     lv_label_set_text(etiquetaHora, "--:--");
     lv_label_set_text(etiquetaDiaSemana, "");
     lv_label_set_text(etiquetaFecha, "Conecta el móvil");
@@ -613,6 +804,12 @@ void ui_actualizar_reloj(bool horaSincronizada, int hora, int minuto, int diaSem
   lv_label_set_text_fmt(etiquetaHora, "%02d:%02d", hora, minuto);
   lv_label_set_text(etiquetaDiaSemana, NOMBRES_DIAS[constrain(diaSemana, 0, 6)]);
   lv_label_set_text_fmt(etiquetaFecha, "%d de %s", dia, NOMBRES_MESES[constrain(mes, 1, 12) - 1]);
+}
+
+void ui_actualizar_segundos(int segundo)
+{
+  lv_arc_set_value(arcoSegundos, segundo);
+  lv_obj_remove_flag(arcoSegundos, LV_OBJ_FLAG_HIDDEN);
 }
 
 void ui_mostrar_conexion(bool conectado)
@@ -658,36 +855,58 @@ void ui_volver_al_reloj()
 
 // ------------------------------------------------------------------ navegación
 
-void ui_mostrar_navegacion(const String &distanciaManiobra, const String &indicacion,
+void ui_mostrar_navegacion(const String &distanciaManiobra, bool ahora, const String &indicacion,
                            const String &horaLlegada, const String &tiempoRestante,
-                           const String &distanciaRestante)
+                           const String &maniobra)
 {
   navegacionActiva = true;
 
-  // "Llegada 14:51". Si el texto ya trae la palabra "Llegada" se deja tal cual.
-  String textoLlegada = horaLlegada;
-  textoLlegada.trim();
-  bool yaTraeLlegada = textoLlegada.startsWith("Llegada") || textoLlegada.startsWith("llegada");
-  if (textoLlegada.length() > 0 && !yaTraeLlegada)
-    textoLlegada = String("Llegada ") + textoLlegada;
+  // Arriba, corto para que quepa: "19:04 · 4 min" o, si solo hay hora, "Llegada 21:20".
+  String hora = horaLlegada;
+  hora.trim();
+  if (hora.startsWith("Llegada") || hora.startsWith("llegada"))
+    hora = hora.substring(hora.indexOf(' ') + 1);
+  String textoLlegada;
+  if (hora.length() > 0 && tiempoRestante.length() > 0)
+    textoLlegada = hora + " · " + tiempoRestante;
+  else if (hora.length() > 0)
+    textoLlegada = String("Llegada ") + hora;
+  else
+    textoLlegada = tiempoRestante;
   lv_label_set_text(etiquetaLlegada, textoLlegada.c_str());
 
-  // "19 min · 8,4 km" (o solo lo que haya).
-  String textoTiempoYDistancia = tiempoRestante;
-  if (distanciaRestante.length() > 0)
+  // Flecha: se redibuja solo si cambia la maniobra.
+  if (maniobra != maniobraDibujada)
+    dibujarFlechaVectorial(maniobra);
+
+  // Con distancia (o "Ahora"): flecha a la izquierda y distancia a la derecha. Sin
+  // distancia: flecha centrada y la indicación con una línea más.
+  bool enFila = ahora || distanciaManiobra.length() > 0;
+  if (enFila)
   {
-    if (textoTiempoYDistancia.length() > 0)
-      textoTiempoYDistancia += " · ";
-    textoTiempoYDistancia += distanciaRestante;
+    String numero = distanciaManiobra, unidad = "";
+    int espacio = distanciaManiobra.lastIndexOf(' ');
+    if (ahora)
+      numero = "Ahora";
+    else if (espacio > 0)
+    {
+      numero = distanciaManiobra.substring(0, espacio);
+      unidad = distanciaManiobra.substring(espacio + 1);
+    }
+    // "Ahora" a 40 px no cabría a la derecha de la flecha: va a 28 px.
+    lv_obj_set_style_text_font(etiquetaNumeroDistancia, ahora ? &fuente_es_28 : &fuente_distancia_40, 0);
+    lv_label_set_text(etiquetaNumeroDistancia, numero.c_str());
+    lv_label_set_text(etiquetaUnidadDistancia, unidad.c_str());
+    lv_obj_remove_flag(filaDistancia, LV_OBJ_FLAG_HIDDEN);
+    colocarFlecha(CENTRO_X_FLECHA_EN_FILA, CENTRO_Y_FLECHA_EN_FILA);
+    colocarIndicacion(indicacion, Y_INDICACION_CON_DISTANCIA, 2);
   }
-  lv_label_set_text(etiquetaTiempoYDistancia, textoTiempoYDistancia.c_str());
-
-  lv_label_set_text(etiquetaDistanciaManiobra, distanciaManiobra.c_str());
-  lv_label_set_text(etiquetaIndicacion, indicacion.c_str());
-  colocarIndicacion(distanciaManiobra.length() > 0);
-
-  // La flecha no se toca aquí: se pinta cuando llega una nueva (ui_mostrar_flecha) y se
-  // conserva aunque esta actualización no traiga flecha.
+  else
+  {
+    lv_obj_add_flag(filaDistancia, LV_OBJ_FLAG_HIDDEN);
+    colocarFlecha(CENTRO_PANTALLA, CENTRO_Y_FLECHA_CENTRADA);
+    colocarIndicacion(indicacion, Y_INDICACION_SIN_DISTANCIA, 3);
+  }
 
   // Desde el reloj o la llegada se pasa a la navegación; el brillo no se interrumpe.
   lv_obj_t *pantalla = lv_screen_active();
@@ -699,7 +918,11 @@ void ui_mostrar_flecha(const uint8_t *bitsFlecha)
 {
   if (bitsFlecha == nullptr)
   {
-    lv_obj_add_flag(lienzoFlecha, LV_OBJ_FLAG_HIDDEN);
+    // Fin de la ruta: se olvidan las dos flechas.
+    hayFlechaDeLaApp = false;
+    maniobraDibujada = "";
+    maniobraConFlechaPropia = false;
+    mostrarFlechaAdecuada();
     return;
   }
 
@@ -721,8 +944,9 @@ void ui_mostrar_flecha(const uint8_t *bitsFlecha)
         bytesFila[columnaPantalla / 8] |= 0x80 >> (columnaPantalla % 8);
     }
   }
-  lv_obj_remove_flag(lienzoFlecha, LV_OBJ_FLAG_HIDDEN);
   lv_obj_invalidate(lienzoFlecha); // avisar a LVGL de que hay que redibujarla
+  hayFlechaDeLaApp = true;
+  mostrarFlechaAdecuada(); // solo se ve si la maniobra no tiene flecha propia
 }
 
 // ------------------------------------------------------------------ progreso y aviso de maniobra
@@ -741,7 +965,8 @@ static void activarAviso(bool activar)
 
   uint32_t colorArco = activar ? COLOR_AVISO : COLOR_ARCO_PROGRESO;
   lv_obj_set_style_arc_color(arcoProgreso, lv_color_hex(colorArco), LV_PART_INDICATOR);
-  lv_obj_set_style_text_color(etiquetaDistanciaManiobra, lv_color_hex(activar ? COLOR_AVISO : colorTexto()), 0);
+  lv_obj_set_style_text_color(etiquetaNumeroDistancia, lv_color_hex(activar ? COLOR_AVISO : colorTexto()), 0);
+  lv_obj_set_style_text_color(etiquetaUnidadDistancia, lv_color_hex(activar ? COLOR_AVISO : colorSecundario()), 0);
 
   lv_anim_delete(arcoProgreso, cambiarOpacidadArco);
   if (activar)
@@ -777,6 +1002,19 @@ void ui_mostrar_progreso_maniobra(float fraccionRecorrida, bool aviso)
   activarAviso(aviso);
 }
 
+void ui_mostrar_progreso_viaje(float fraccionRecorrida)
+{
+  if (fraccionRecorrida < 0)
+  {
+    lv_obj_add_flag(arcoViaje, LV_OBJ_FLAG_HIDDEN);
+    return;
+  }
+  if (fraccionRecorrida > 1)
+    fraccionRecorrida = 1;
+  lv_arc_set_value(arcoViaje, (int32_t)(fraccionRecorrida * ESCALA_ARCO));
+  lv_obj_remove_flag(arcoViaje, LV_OBJ_FLAG_HIDDEN);
+}
+
 // ------------------------------------------------------------------ modo noche
 
 static void colorearTexto(lv_obj_t *etiqueta, uint32_t color)
@@ -795,10 +1033,16 @@ void ui_establecer_modo_noche(bool activado)
   colorearTexto(etiquetaHora, colorTexto());
   colorearTexto(etiquetaFecha, colorFecha());
   colorearTexto(etiquetaLlegada, colorSecundario());
-  colorearTexto(etiquetaTiempoYDistancia, colorSecundario());
   colorearTexto(etiquetaIndicacion, colorTexto());
+  colorearTexto(etiquetaAccion, colorTexto());
+  colorearTexto(etiquetaDestino, colorFecha());
+  colorearTexto(etiquetaNumeroSalida, colorTexto());
   if (!avisoActivo)
-    colorearTexto(etiquetaDistanciaManiobra, colorTexto());
+  {
+    colorearTexto(etiquetaNumeroDistancia, colorTexto());
+    colorearTexto(etiquetaUnidadDistancia, colorSecundario());
+  }
+  colorearTexto(etiquetaResumenViaje, colorFecha());
   colorearTexto(etiquetaTituloBrillo, colorSecundario());
   colorearTexto(etiquetaValorBrillo, colorTexto());
   lv_obj_set_style_text_color(casillaAhorro, lv_color_hex(colorTexto()), LV_PART_MAIN);
@@ -811,6 +1055,10 @@ void ui_establecer_modo_noche(bool activado)
   lv_color_t colorFlecha = lv_color_hex(colorTexto());
   lv_canvas_set_palette(lienzoFlecha, 1, lv_color32_make(colorFlecha.red, colorFlecha.green, colorFlecha.blue, 255));
   lv_obj_invalidate(lienzoFlecha);
+
+  // La flecha vectorial se redibuja con el nuevo color.
+  if (maniobraDibujada.length() > 0)
+    dibujarFlechaVectorial(maniobraDibujada);
 
   // La batería del móvil se recolorea en su próxima actualización; el icono se ajusta ya.
   if (!lv_obj_has_flag(etiquetaPorcentajeBateria, LV_OBJ_FLAG_HIDDEN))

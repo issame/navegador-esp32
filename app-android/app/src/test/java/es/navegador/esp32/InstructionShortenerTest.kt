@@ -80,8 +80,8 @@ class InstructionShortenerTest {
     }
 
     @Test
-    fun severalLinesAreJoinedWithDot() {
-        assertEquals("C/ Mayor · Dch.", shorten("Calle Mayor\nGira a la derecha"))
+    fun severalLines_actionFirstAndRestAsDestination() {
+        assertEquals("Dch. · C/ Mayor", shorten("Calle Mayor\nGira a la derecha"))
     }
 
     @Test
@@ -90,5 +90,60 @@ class InstructionShortenerTest {
             "En la rotonda, toma la novena salida hacia Av. Diagonal",
             shorten("En la rotonda, toma la novena salida hacia Avinguda Diagonal"),
         )
+    }
+
+    // ------------------------------------------------------------ ruta real de Google Maps (registro)
+
+    private fun parts(text: String) = InstructionShortener.shortenParts(text)
+
+    @Test
+    fun realRoute_roundaboutWithContinueBy() {
+        val p = parts("En Pl. dels Voluntaris Olimpics, toma la segunda salida y continúa por Carrer de Salvador Espriu")
+        assertEquals("Pl. Voluntaris Olimpics: 2.ª salida", p.action)
+        assertEquals("C/ Salvador Espriu", p.destination)
+        assertEquals("RNDB2", p.maneuver)
+    }
+
+    @Test
+    fun realRoute_useLeftLaneForRamp() {
+        val p = parts("Utiliza el carril izquierdo para tomar la rampa B-10/Ronda Litoral en dirección Llobregat")
+        assertEquals("Carril izq.", p.action)
+        assertEquals("B-10/Rda. Litoral · Llobregat", p.destination)
+        assertEquals("KL", p.maneuver)
+    }
+
+    @Test
+    fun realRoute_motorwayExit() {
+        val p = parts("Toma la salida 21 hacia Ciutat Vella")
+        assertEquals("Salida 21", p.action)
+        assertEquals("Ciutat Vella", p.destination)
+        assertEquals("EXITR", p.maneuver)
+        assertEquals("Salida 21\nCiutat Vella", p.forBoard)
+    }
+
+    @Test
+    fun realRoute_otherPhrasesAndManeuvers() {
+        assertEquals(InstructionShortener.Parts("1.ª salida", "Av. Paral·lel", "RNDB1"),
+            parts("En la rotonda, toma la primera salida en dirección Avinguda del Paral·lel"))
+        assertEquals(InstructionShortener.Parts("Pl. Espanya: 4.ª salida", "Gran Via Corts Catalanes/C-31", "RNDB4"),
+            parts("En Pl. d'Espanya, toma la cuarta salida hacia Gran Via de les Corts Catalanes/C-31"))
+        assertEquals(InstructionShortener.Parts("Sal de la rotonda", "C/ Salvador Espriu", "RNDBX"),
+            parts("Sal de la rotonda en Carrer de Salvador Espriu"))
+        assertEquals(InstructionShortener.Parts("Dch.", "C/ Moianès", "TR"),
+            parts("Gira a la derecha hacia Carrer del Moianès"))
+        assertEquals(InstructionShortener.Parts("Dirígete", "C/ Toledo", "C"),
+            parts("Dirígete hacia Carrer de Toledo"))
+        assertEquals(InstructionShortener.Parts("Iniciando navegación…", "", ""),
+            parts("Iniciando navegación…"))
+    }
+
+    @Test
+    fun maneuverCodes_forTurns() {
+        assertEquals("TL", parts("Gira a la izquierda").maneuver)
+        assertEquals("TSLR", parts("Gira ligeramente a la derecha").maneuver)
+        assertEquals("TSHL", parts("Gira bruscamente a la izquierda").maneuver)
+        assertEquals("KR", parts("Mantente a la derecha").maneuver)
+        assertEquals("TU", parts("Haz un cambio de sentido").maneuver)
+        assertEquals("", parts("Incorpórate a la B-20").maneuver)
     }
 }

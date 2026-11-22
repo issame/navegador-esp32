@@ -178,7 +178,7 @@ class MainActivity : AppCompatActivity() {
             return
         }
         binding.txtManeuver.text = nav.maneuverDistance
-        binding.txtInstruction.text = nav.instruction
+        binding.txtInstruction.text = nav.instructionOneLine
         binding.txtSummary.text = nav.summary
         val icon = nav.icon
         if (icon != null) binding.imgIcon.setImageBitmap(IconConverter.preview(icon))
@@ -239,12 +239,14 @@ class MainActivity : AppCompatActivity() {
             Hub.log("Prueba de navegación detenida")
         } else {
             Hub.setTestActive(true)
+            // Pasa por el abreviador igual que una ruta real: "Izq." / "Pl. Àngel (Peña, ¿sí? ¡ç!)".
+            val test = InstructionShortener.shortenParts("Gira a la izquierda hacia la Plaça de l'Àngel (Peña, ¿sí? ¡ç!)")
             Hub.setNav(
                 NavInfo(
                     active = true,
                     maneuverDistance = "250 m",
-                    // Pasa por el abreviador igual que una ruta real: "Izq. · Pl. Àngel (Peña, ¿sí? ¡ç!)".
-                    instruction = InstructionShortener.shorten("Gira a la izquierda hacia la Plaça de l'Àngel (Peña, ¿sí? ¡ç!)"),
+                    instruction = test.forBoard,
+                    maneuver = test.maneuver,
                     duration = "19 min",
                     distance = "8,4 km",
                     eta = "14:51",

@@ -68,6 +68,12 @@ static uint32_t ultimaActualizacionReloj = 0;
 static String indicacionDelTramo;
 static float distanciaInicialDelTramo = -1;
 
+// Viaje actual, para el arco del viaje y el resumen de la llegada.
+static bool rutaEnCurso = false;
+static uint32_t momentoInicioRuta = 0;
+static float distanciaInicialDelViaje = -1; // metros; -1 si la app no la manda
+static int ultimoSegundoMostrado = -1;
+
 // Brillo aplicado ahora mismo (%), para no tocar la retroiluminación si no cambia.
 static int brilloAplicado = -1;
 
@@ -192,12 +198,26 @@ static void alRecibirDatos(Config tipo, uint32_t valorA, uint32_t valorB)
 
 // ------------------------------------------------------------------ trabajo en loop()
 
-// Calcula cuánto se ha recorrido del tramo actual y si la maniobra es inminente.
-static void actualizarProgresoManiobra(const String &distanciaManiobra, const String &indicacion)
+// ¿Se ha llegado a la maniobra? Google Maps quita la distancia en ese momento pero
+// mantiene la misma indicación: entonces se muestra "Ahora".
+static bool estaEnLaManiobra(const String &distanciaManiobra, const String &indicacion)
 {
+  return distanciaManiobra.length() == 0 && distanciaInicialDelTramo > 0 && indicacion == indicacionDelTramo;
+}
+
+// Calcula cuánto se ha recorrido del tramo actual y si la maniobra es inminente.
+static void actualizarProgresoManiobra(const String &distanciaManiobra, const String &indicacion, bool ahora)
+{
+  if (ahora)
+  {
+    ui_mostrar_progreso_maniobra(1, true); // arco lleno, naranja y parpadeando
+    return;
+  }
   float metrosRestantes = distanciaEnMetros(distanciaManiobra);
   if (metrosRestantes < 0)
   {
+    indicacionDelTramo = indicacion;
+    distanciaInicialDelTramo = -1;
     ui_mostrar_progreso_maniobra(-1, false); // sin distancia no hay progreso que mostrar
     return;
   }
@@ -224,8 +244,47 @@ static void olvidarRuta()
   crcFlechaMostrada = 0xFFFFFFFF;
   indicacionDelTramo = "";
   distanciaInicialDelTramo = -1;
+  rutaEnCurso = false;
+  distanciaInicialDelViaje = -1;
   ui_mostrar_flecha(nullptr);
   ui_mostrar_progreso_maniobra(-1, false);
+  ui_mostrar_progreso_viaje(-1);
+}
+
+// Progreso del viaje completo a partir de la distancia restante (solo si la app la manda).
+static void actualizarProgresoViaje(const String &distanciaRestante)
+{
+  float metrosRestantes = distanciaEnMetros(distanciaRestante);
+  if (metrosRestantes < 0)
+  {
+    ui_mostrar_progreso_viaje(-1);
+    return;
+  }
+  // Si la distancia crece (ruta recalculada), se toma como nuevo total.
+  if (distanciaInicialDelViaje <= 0 || metrosRestantes > distanciaInicialDelViaje)
+    distanciaInicialDelViaje = metrosRestantes;
+  ui_mostrar_progreso_viaje(1.0f - metrosRestantes / distanciaInicialDelViaje);
+}
+
+// "24 min · 9,0 km" (la distancia solo si se conoce).
+static String resumenDelViaje()
+{
+  uint32_t minutos = (millis() - momentoInicioRuta + 30000) / 60000;
+  if (minutos < 1)
+    minutos = 1;
+  String resumen = String(minutos) + " min";
+  if (distanciaInicialDelViaje > 0)
+  {
+    char distancia[16];
+    if (distanciaInicialDelViaje >= 1000)
+      snprintf(distancia, sizeof(distancia), "%.1f km", distanciaInicialDelViaje / 1000.0f);
+    else
+      snprintf(distancia, sizeof(distancia), "%d m", (int)distanciaInicialDelViaje);
+    String texto = distancia;
+    texto.replace(".", ","); // coma decimal
+    resumen += " · " + texto;
+  }
+  return resumen;
 }
 
 static void mostrarNavegacionRecibida()
@@ -245,14 +304,20 @@ static void mostrarNavegacionRecibida()
   if (!navegacion.isNavigation && navegacion.title == MARCA_LLEGADA)
   {
     Serial.println("Llegada al destino");
+    String resumen = rutaEnCurso ? resumenDelViaje() : String("");
     olvidarRuta();
-    ui_mostrar_llegada(enlaceMovil.getHour(true), enlaceMovil.getMinute());
+    ui_mostrar_llegada(enlaceMovil.getHour(true), enlaceMovil.getMinute(), resumen);
     momentoLlegada = millis();
     if (momentoLlegada == 0)
       momentoLlegada = 1; // 0 significa "sin llegada"
     return;
   }
   momentoLlegada = 0; // empieza otra ruta
+  if (!rutaEnCurso)
+  {
+    rutaEnCurso = true;
+    momentoInicioRuta = millis();
+  }
 
   String distanciaManiobra = navegacion.title;
   String indicacion = navegacion.directions;
@@ -262,11 +327,15 @@ static void mostrarNavegacionRecibida()
     indicacion = navegacion.title;
     distanciaManiobra = "";
   }
-  Serial.printf("Navegación: %s | %s | %s %s %s\n", distanciaManiobra.c_str(), indicacion.c_str(),
-                navegacion.eta.c_str(), navegacion.duration.c_str(), navegacion.distance.c_str());
-  ui_mostrar_navegacion(distanciaManiobra, indicacion, navegacion.eta, navegacion.duration,
-                        navegacion.distance);
-  actualizarProgresoManiobra(distanciaManiobra, indicacion);
+  // La app manda el tipo de maniobra (para la flecha vectorial) en el campo "velocidad".
+  String maniobra = navegacion.speed;
+  bool ahora = estaEnLaManiobra(distanciaManiobra, indicacion);
+  Serial.printf("Navegación: %s | %s [%s] | %s %s %s\n", ahora ? "Ahora" : distanciaManiobra.c_str(),
+                indicacion.c_str(), maniobra.c_str(), navegacion.eta.c_str(), navegacion.duration.c_str(),
+                navegacion.distance.c_str());
+  ui_mostrar_navegacion(distanciaManiobra, ahora, indicacion, navegacion.eta, navegacion.duration, maniobra);
+  actualizarProgresoManiobra(distanciaManiobra, indicacion, ahora);
+  actualizarProgresoViaje(navegacion.distance);
 }
 
 static void mostrarFlechaRecibida()
@@ -318,6 +387,12 @@ static void actualizarReloj()
   {
     ui_actualizar_reloj(false, 0, 0, 0, 1, 1);
     return;
+  }
+  int segundo = enlaceMovil.getSecond();
+  if (segundo != ultimoSegundoMostrado)
+  {
+    ultimoSegundoMostrado = segundo;
+    ui_actualizar_segundos(segundo);
   }
   ui_actualizar_reloj(true,
                       enlaceMovil.getHour(true), // formato 24 h

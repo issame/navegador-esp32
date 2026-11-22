@@ -5,7 +5,10 @@ data class NavInfo(
     val active: Boolean,
     /** Distancia hasta la siguiente maniobra, p. ej. "250 m". */
     val maneuverDistance: String = "",
-    /** Indicación, p. ej. "Gira a la izquierda hacia Calle Mayor". */
+    /**
+     * Indicación. Tras pasar por [InstructionShortener] es "acción\ndestino"
+     * (p. ej. "Salida 21\nCiutat Vella"): la placa decide cómo repartirla en líneas.
+     */
     val instruction: String = "",
     /** Tiempo restante, p. ej. "19 min". */
     val duration: String = "",
@@ -17,7 +20,12 @@ data class NavInfo(
     val icon: ByteArray? = null,
     /** La ruta ha terminado porque se ha llegado al destino (la placa muestra "Has llegado"). */
     val arrived: Boolean = false,
+    /** Tipo de maniobra para la flecha vectorial de la placa (ver [InstructionShortener]), o "". */
+    val maneuver: String = "",
 ) {
+    /** Indicación en una sola línea, para mostrarla en la app y en el registro. */
+    val instructionOneLine: String get() = instruction.replace("\n", " · ")
+
     /** Línea resumen: "Llegada 14:51 · 19 min · 8,4 km". */
     val summary: String
         get() = listOf(
@@ -36,7 +44,8 @@ data class NavInfo(
             distance == other.distance &&
             eta == other.eta &&
             iconEquals(icon, other.icon) &&
-            arrived == other.arrived
+            arrived == other.arrived &&
+            maneuver == other.maneuver
     }
 
     override fun hashCode(): Int {
@@ -47,6 +56,7 @@ data class NavInfo(
         h = 31 * h + distance.hashCode()
         h = 31 * h + eta.hashCode()
         h = 31 * h + arrived.hashCode()
+        h = 31 * h + maneuver.hashCode()
         h = 31 * h + (icon?.contentHashCode() ?: 0)
         return h
     }

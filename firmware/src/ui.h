@@ -23,6 +23,9 @@ void ui_atender();
 // diaSemana: 0 = domingo … 6 = sábado. mes: 1 … 12.
 void ui_actualizar_reloj(bool horaSincronizada, int hora, int minuto, int diaSemana, int dia, int mes);
 
+// Anillo de segundos del reloj (0 … 59). Se muestra en cuanto se conoce la hora.
+void ui_actualizar_segundos(int segundo);
+
 // Icono de Bluetooth del reloj: gris sin conexión, azul con el móvil conectado.
 // Sin conexión también se oculta la batería del móvil.
 void ui_mostrar_conexion(bool conectado);
@@ -33,14 +36,19 @@ void ui_mostrar_bateria_movil(int porcentaje, bool cargando);
 // ---------------------------------------------------------------- navegación
 
 // Rellena la pantalla de navegación y la muestra si se está en el reloj (no interrumpe la
-// pantalla de brillo). Sin distancia a la maniobra, la indicación sube y puede ocupar hasta
-// 4 líneas. La flecha se mantiene (ver ui_mostrar_flecha).
-void ui_mostrar_navegacion(const String &distanciaManiobra, const String &indicacion,
+// pantalla de brillo). Todo el texto queda dentro de la zona segura (sin tocar los arcos).
+//  - distanciaManiobra: "250 m" (número grande, unidad pequeña); vacía si no hay.
+//  - ahora: se ha llegado a la maniobra (la app ya no manda distancia): muestra "Ahora".
+//  - indicacion: "acción\ndestino"; a 20 px en dos líneas si cabe, si no a 16 px.
+//  - maniobra: código de la flecha vectorial (flechas.h); si no se conoce, se usa la de la app.
+// Sin distancia ni "Ahora", la flecha va centrada y la indicación tiene una línea más.
+void ui_mostrar_navegacion(const String &distanciaManiobra, bool ahora, const String &indicacion,
                            const String &horaLlegada, const String &tiempoRestante,
-                           const String &distanciaRestante);
+                           const String &maniobra);
 
-// Pinta la flecha de la maniobra: 48x48 a 1 bit por píxel (288 bytes), con el bit
-// más alto de cada byte a la izquierda. nullptr la oculta (solo al terminar la ruta).
+// Guarda la flecha que manda la app: 48x48 a 1 bit por píxel (288 bytes), con el bit
+// más alto de cada byte a la izquierda. Solo se ve si la maniobra no tiene flecha
+// vectorial propia. nullptr borra las dos flechas (solo al terminar la ruta).
 void ui_mostrar_flecha(const uint8_t *bitsFlecha);
 
 // Arco alrededor del borde que se completa al acercarse a la maniobra.
@@ -49,11 +57,16 @@ void ui_mostrar_flecha(const uint8_t *bitsFlecha);
 // se pinta en naranja.
 void ui_mostrar_progreso_maniobra(float fraccionRecorrida, bool aviso);
 
+// Arco interior (azul) con el progreso del viaje completo; negativo lo oculta (cuando la
+// app no manda la distancia restante, como Google Maps).
+void ui_mostrar_progreso_viaje(float fraccionRecorrida);
+
 // Termina la navegación y vuelve al reloj (si se está en la navegación o en la llegada).
 void ui_volver_al_reloj();
 
-// Pantalla de "Has llegado" con la hora de llegada. No interrumpe la pantalla de brillo.
-void ui_mostrar_llegada(int hora, int minuto);
+// Pantalla de "Has llegado" con la hora y el resumen del viaje ("24 min · 9,0 km").
+// No interrumpe la pantalla de brillo.
+void ui_mostrar_llegada(int hora, int minuto, const String &resumenViaje);
 
 // ---------------------------------------------------------------- brillo y modo noche
 

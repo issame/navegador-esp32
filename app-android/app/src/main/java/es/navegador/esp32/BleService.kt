@@ -78,7 +78,22 @@ class BleService : Service() {
         /** Descriptor estándar para activar los avisos (notificaciones) de una característica. */
         private val CLIENT_CONFIG_DESCRIPTOR_UUID: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
         private const val TIME_RESYNC_INTERVAL_MS = 3_600_000L
-        private const val MAX_RECONNECT_DELAY_MS = 30_000L
+        /**
+         * Espera máxima entre intentos de reconexión. Cada intento es directo: esperar a que
+         * Android reconecte solo (autoConnect) podía tardar más de 20 minutos o no llegar nunca.
+         */
+        private const val MAX_RECONNECT_DELAY_MS = 12_000L
+
+        /** Explica los códigos de desconexión más habituales de Android. */
+        private fun disconnectReason(status: Int): String = when (status) {
+            0 -> "desconexión normal"
+            8 -> "la placa dejó de responder (fuera de alcance, apagada o sin batería)"
+            19 -> "la placa cerró la conexión"
+            22 -> "el móvil cerró la conexión"
+            62 -> "no se pudo establecer la conexión"
+            133 -> "error genérico de Bluetooth del móvil"
+            else -> "código $status"
+        }
 
         private val LOG_TIME_FORMAT = DateTimeFormatter.ofPattern("HH:mm:ss")
 
@@ -241,16 +256,16 @@ class BleService : Service() {
             scheduleReconnect()
             return
         }
-        // El primer intento es directo. Los siguientes usan autoConnect: Android espera
-        // a que la placa aparezca y conecta en cuanto la ve, sin gastar batería reintentando.
-        val waitForDevice = reconnectAttempts > 0
-        Hub.setConnection(if (waitForDevice) ConnectionState.WAITING_FOR_DEVICE else ConnectionState.CONNECTING)
-        Hub.log("Conectando con $address" + if (waitForDevice) " (en espera)" else "")
+        // Siempre intento directo. Si la placa no está, Android lo da por fallido en unos
+        // segundos y se reintenta (ver scheduleReconnect).
+        val retrying = reconnectAttempts > 0
+        Hub.setConnection(if (retrying) ConnectionState.WAITING_FOR_DEVICE else ConnectionState.CONNECTING)
+        Hub.log("Conectando con $address" + if (retrying) " (intento ${reconnectAttempts + 1})" else "")
         currentGatt = adapter.getRemoteDevice(address)
-            .connectGatt(this, waitForDevice, gattCallback, BluetoothDevice.TRANSPORT_LE)
+            .connectGatt(this, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
     }
 
-    /** Reintenta con espera creciente: 2 s, 4 s, 6 s… hasta 30 s. */
+    /** Reintenta con espera creciente: 2 s, 4 s, 6 s… hasta 12 s. */
     private fun scheduleReconnect() {
         if (isStopping) return
         reconnectAttempts++
@@ -289,7 +304,7 @@ class BleService : Service() {
                     Hub.log("Conectado; ajustando tamaño de paquete")
                     if (!gatt.requestMtu(REQUESTED_MTU)) gatt.discoverServices()
                 } else {
-                    Hub.log("Desconectado (código $status)")
+                    Hub.log("Desconectado: ${disconnectReason(status)}")
                     onConnectionLost(gatt)
                 }
             }
@@ -424,7 +439,7 @@ class BleService : Service() {
         val icon = nav.icon
         val iconCrc = icon?.let(Protocol::iconCrc) ?: 0xFFFFFFFFL
         enqueue(Protocol.navigationPacket(nav, iconCrc))
-        Hub.log("→ navegación: ${nav.maneuverDistance} | ${nav.instruction.replace('\n', ' ')} | ${nav.summary}")
+        Hub.log("→ navegación: ${nav.maneuverDistance} | ${nav.instructionOneLine} [${nav.maneuver}] | ${nav.summary}")
         // La flecha (3 paquetes) solo se envía cuando cambia.
         if (icon != null && iconCrc != lastSentIconCrc) {
             Protocol.iconPackets(icon, iconCrc).forEach(::enqueue)

@@ -129,14 +129,15 @@ class NavigationListener : NotificationListenerService() {
         activeNotificationKey = statusBarNotification.key
         val arrow = loadArrow(notification, app) ?: customViews?.image?.let(IconConverter::fromDrawable)
 
-        // Indicación acortada para la pantalla; en el registro quedan las dos versiones.
-        val shortInstruction = InstructionShortener.shorten(navigation.instruction)
-        if (shortInstruction != navigation.instruction) {
-            Hub.log("  abreviado: \"${navigation.instruction.replace('\n', ' ')}\" → \"$shortInstruction\"")
+        // Indicación acortada (acción, destino y tipo de maniobra); en el registro quedan
+        // la original y la abreviada.
+        val shortened = InstructionShortener.shortenParts(navigation.instruction)
+        if (shortened.joined != navigation.instruction) {
+            Hub.log("  abreviado: \"${navigation.instruction.replace('\n', ' ')}\" → \"${shortened.joined}\" [${shortened.maneuver}]")
         }
 
         Hub.setTestActive(false) // una ruta real sustituye a la de prueba
-        Hub.setNav(navigation.copy(instruction = shortInstruction, icon = arrow))
+        Hub.setNav(navigation.copy(instruction = shortened.forBoard, maneuver = shortened.maneuver, icon = arrow))
     }
 
     /** La flecha de la maniobra suele ser el icono grande; en OsmAnd, el pequeño. */

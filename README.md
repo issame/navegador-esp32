@@ -13,7 +13,7 @@ Android propia por Bluetooth LE.
 
 - **Pantalla de arranque** con un icono de mapa plegado y un marcador, y la versión del
   firmware debajo (2 s).
-- **Reloj** con la hora en grande, el día de la semana y la fecha en castellano
+- **Reloj** con un **anillo de segundos** en el borde, la hora en grande, el día de la semana y la fecha en castellano
   ("miércoles", "19 de noviembre"). Muestra `--:--` y "Conecta el móvil" hasta recibir la hora.
 - **Icono de Bluetooth** en el reloj: gris sin conexión, azul con el móvil conectado, y a
   su lado la **batería del móvil** (porcentaje, rayo si carga, naranja por debajo del 15 %).
@@ -23,19 +23,25 @@ Android propia por Bluetooth LE.
   sube hasta el 100 % a las 9:00 y baja desde las 19:00, sin saltos). Casilla **Modo ahorro**
   (CPU a 80 MHz, lo mínimo con Bluetooth). Los ajustes se guardan en la placa.
 - **Modo noche** de 22:00 a 7:00: los textos blancos pasan a ámbar suave.
-- **"Has llegado"**: al llegar al destino se muestra una bandera con la hora unos segundos
+- **"Has llegado"**: al llegar al destino se muestra una bandera con la hora y el **resumen del
+  viaje** ("24 min · 9,0 km", la distancia si se conoce) unos segundos
   (si se cancela la ruta, vuelve directamente al reloj).
 - **Navegación automática**: al empezar una ruta cambia sola a la pantalla de navegación y,
   al terminar (o si se pierde la conexión), vuelve al reloj.
-- **Pantalla de navegación**:
-  - arriba, hora de llegada y tiempo y distancia restantes ("Llegada 14:51", "19 min · 8,4 km");
-  - en el centro, la flecha de la maniobra tal como la dibuja la app de navegación;
-  - debajo, la distancia a la maniobra en grande;
-  - abajo, la indicación (como mucho 2 líneas, dentro de la parte visible del círculo);
-    sin distancia a la maniobra, la indicación sube a su hueco y puede ocupar 4 líneas.
-- **Flechas de la app de navegación**: se muestran tal cual (en blanco y negro) y se
-  conservan hasta que llega otra o termina la ruta; la placa no dibuja flechas propias.
-- **Arco de progreso** en el borde que se va completando al acercarse a la maniobra.
+- **Pantalla de navegación** con todo el texto dentro de una **zona segura** (nunca toca
+  los arcos del borde):
+  - arriba, la hora de llegada ("Llegada 21:20" o "19:04 · 4 min" si se conoce el tiempo);
+  - en el centro, en fila, la **flecha** y la **distancia** (número grande, unidad pequeña);
+  - debajo, la indicación: en **dos líneas a 20 px** (acción en blanco, destino en gris claro)
+    si caben, o a 16 px si no; sin distancia, la flecha se centra y la indicación gana una línea.
+- **Flechas vectoriales** propias, nítidas: giros, ligeros y bruscos, mantenerse en el carril,
+  salidas, cambio de sentido y **rotondas con el número de salida**. Si la maniobra no se
+  reconoce, se usa la flecha de la app de navegación.
+- **"Ahora"**: cuando Maps quita la distancia en plena maniobra, se muestra "Ahora" en naranja
+  con el arco lleno.
+- **Doble arco** en el borde: el exterior se completa al acercarse a la maniobra; el interior
+  (azul, más fino) muestra el progreso del viaje cuando la app manda la distancia restante
+  (OsmAnd; Google Maps solo manda la hora de llegada).
 - **Aviso de maniobra inminente**: a 100 m o menos, el arco se vuelve naranja y parpadea,
   y la distancia se pinta en naranja.
 - **Caracteres de castellano y catalán** (`á é í ó ú à è ò ï ü ñ ç ŀ · ¿ ¡ ’ € …`) con la
@@ -55,9 +61,11 @@ Android propia por Bluetooth LE.
 - **Indicaciones abreviadas** para que quepan sin perder la calle:
   "En la rotonda, toma la primera salida en dirección Avinguda del Paral·lel" → "1.ª salida · Av. Paral·lel",
   "Gira a la izquierda en Carrer de Sagunt" → "Izq. · C/ Sagunt". Acciones (Izq., Dch., Lig. izq.,
-  Recto, Salida 5, Cambio de sentido…), tipos de vía en castellano y catalán (Av., C/, Pl., Pg.,
+  Recto, Salida 5, Carril izq., Cambio de sentido…), tipos de vía en castellano y catalán (Av., C/, Pl., Pg.,
   Ctra., Rda., Trav., Rbla., Cam., Gta.) y sin "de", "del", "d'"… detrás.
 - **Envío eficiente**: solo manda datos cuando cambian, y la flecha solo cuando es otra.
+- **Reconexión rápida**: si se pierde la conexión, reintenta directamente cada pocos segundos
+  (como mucho 12 s) y el registro explica el motivo de cada desconexión.
 - **Funciona en segundo plano** con una notificación fija que indica el estado de la conexión.
 - **Ahorro de batería**: avisa si Android puede cerrar la app y lleva al ajuste para evitarlo.
 - **Actualizar firmware**: elige un `.bin` en el móvil y se envía a la placa por Bluetooth,
@@ -84,7 +92,7 @@ Si no caben en una escritura se trocean en 20 bytes + trozos de `índice + 19 by
 | Comando | Contenido |
 |---|---|
 | `0x93` | Hora: año (2 bytes), mes, día, hora, minuto, segundo |
-| `0xEF` | Navegación: estado (`00` inactiva / `80` activa), hay icono, CRC del icono y 6 textos terminados en 0 (distancia a la maniobra, duración, distancia, llegada, indicación, velocidad) |
+| `0xEF` | Navegación: estado (`00` inactiva / `80` activa), hay icono, CRC del icono y 6 textos terminados en 0 (distancia a la maniobra, duración, distancia, llegada, indicación "acción\ndestino" y, en el campo de velocidad, el tipo de maniobra: `TL`, `RNDB2`…) |
 | `0xEE` | Flecha 48×48 a 1 bit, en 3 trozos de 96 bytes |
 | `0x91` | Batería del móvil: cargando (1/0) y porcentaje |
 
@@ -137,6 +145,7 @@ LVGL 9 (la comprobación `LV_VERSION_CHECK(8, 0, 0)` del archivo generado es fal
 | `src/ota.cpp` | Actualización del firmware por Bluetooth |
 | `src/ajustes.cpp` | Brillo manual/automático, modo ahorro y horario del modo noche (guardados en la placa) |
 | `src/distancia.h` | Convierte "250 m", "1,2 km", "0.3 mi"… a metros |
+| `src/flechas.cpp` | Flechas vectoriales de las maniobras |
 | `src/arranque.hpp` | Icono del mapa de la pantalla de arranque |
 | `src/pantalla.hpp` | Pines y configuración del panel GC9A01 y del táctil CST816S |
 | `src/version.h` | Versión del firmware (se ve en el arranque) |
@@ -172,7 +181,7 @@ Al abrirla por primera vez:
 |---|---|
 | `NavigationListener.kt` | Lee la notificación de navegación de Maps u OsmAnd |
 | `NotificationParser.kt` | Saca distancia, indicación, tiempo, distancia restante y llegada de sus textos |
-| `InstructionShortener.kt` | Acorta y abrevia las indicaciones para la pantalla |
+| `InstructionShortener.kt` | Acorta las indicaciones (acción y destino) y deduce el tipo de maniobra |
 | `IconConverter.kt`, `IconBits.kt` | Convierten la flecha a 48×48 a 1 bit |
 | `ArrivalDetector.kt` | Distingue la llegada al destino de una ruta cancelada |
 | `Protocol.kt` | Construye y trocea los paquetes BLE de hora y navegación |
