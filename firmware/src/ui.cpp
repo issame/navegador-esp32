@@ -124,7 +124,10 @@ static lv_obj_t *botonMenos;
 static lv_obj_t *botonMas;
 static lv_obj_t *botonAuto;
 static lv_obj_t *etiquetaBotonAuto;
-static lv_obj_t *casillaAhorro;
+static lv_obj_t *botonAhorro;
+static lv_obj_t *etiquetaBotonAhorro;
+
+static lv_obj_t *pantallaReinicio;
 
 static lv_obj_t *pantallaLlegada;
 static lv_obj_t *etiquetaHasLlegado;
@@ -540,9 +543,47 @@ static void alPulsarAuto(lv_event_t *evento)
   aplicarNuevoBrillo();
 }
 
-static void alCambiarAhorro(lv_event_t *evento)
+// Tiempo que se ve "Reiniciando…" antes de reiniciar (para que dé tiempo a dibujarlo).
+#define ESPERA_ANTES_DE_REINICIAR_MS 600
+
+static void reiniciarPlaca(lv_timer_t *temporizador)
 {
-  ajustes::cambiarModoAhorro(lv_obj_has_state(casillaAhorro, LV_STATE_CHECKED));
+  ESP.restart();
+}
+
+// Botón Ahorro: guarda el ajuste y reinicia la placa, que arranca con la nueva velocidad.
+// No se cambia la CPU en marcha porque colgaba la placa (ver ajustes.h).
+static void alPulsarAhorro(lv_event_t *evento)
+{
+  ajustes::cambiarModoAhorro(!ajustes::modoAhorro());
+  lv_screen_load(pantallaReinicio);
+  lv_timer_t *temporizador = lv_timer_create(reiniciarPlaca, ESPERA_ANTES_DE_REINICIAR_MS, NULL);
+  lv_timer_set_repeat_count(temporizador, 1);
+}
+
+// Botón pastilla como el de Auto: gris con borde si está apagado, verde con ✓ si está encendido.
+static lv_obj_t *crearBotonPastilla(lv_obj_t *padre, int ancho, int y, lv_obj_t **etiqueta, lv_event_cb_t alPulsar)
+{
+  lv_obj_t *boton = lv_button_create(padre);
+  lv_obj_set_size(boton, ancho, 30);
+  lv_obj_set_style_radius(boton, 15, 0);
+  lv_obj_set_style_shadow_width(boton, 0, 0);
+  lv_obj_set_style_border_width(boton, 2, 0);
+  lv_obj_align(boton, LV_ALIGN_TOP_MID, 0, y);
+  *etiqueta = crearEtiqueta(boton, &lv_font_montserrat_14, COLOR_TEXTO);
+  lv_obj_center(*etiqueta);
+  lv_obj_add_event_cb(boton, alPulsar, LV_EVENT_CLICKED, NULL);
+  return boton;
+}
+
+static void pintarBotonPastilla(lv_obj_t *boton, lv_obj_t *etiqueta, const char *texto, bool encendido)
+{
+  if (encendido)
+    lv_label_set_text_fmt(etiqueta, "%s " LV_SYMBOL_OK, texto);
+  else
+    lv_label_set_text(etiqueta, texto);
+  lv_obj_set_style_bg_color(boton, lv_color_hex(encendido ? COLOR_ACTIVADO : COLOR_FONDO), 0);
+  lv_obj_set_style_border_color(boton, lv_color_hex(encendido ? COLOR_ACTIVADO : COLOR_APAGADO), 0);
 }
 
 static lv_obj_t *crearBotonRedondo(lv_obj_t *padre, const char *simbolo, int desplazamientoX)
@@ -597,27 +638,9 @@ static void crearPantallaBrillo()
   botonMenos = crearBotonRedondo(pantallaBrillo, LV_SYMBOL_MINUS, -80);
   botonMas = crearBotonRedondo(pantallaBrillo, LV_SYMBOL_PLUS, 80);
 
-  // Botón Auto (verde y con ✓ cuando está activado).
-  botonAuto = lv_button_create(pantallaBrillo);
-  lv_obj_set_size(botonAuto, 88, 30);
-  lv_obj_set_style_radius(botonAuto, 15, 0);
-  lv_obj_set_style_shadow_width(botonAuto, 0, 0);
-  lv_obj_set_style_border_width(botonAuto, 2, 0);
-  lv_obj_align(botonAuto, LV_ALIGN_TOP_MID, 0, 140);
-  etiquetaBotonAuto = crearEtiqueta(botonAuto, &lv_font_montserrat_14, COLOR_TEXTO);
-  lv_obj_center(etiquetaBotonAuto);
-  lv_obj_add_event_cb(botonAuto, alPulsarAuto, LV_EVENT_CLICKED, NULL);
-
-  // Casilla "Modo ahorro" (se puede tocar en toda la fila).
-  casillaAhorro = lv_checkbox_create(pantallaBrillo);
-  lv_checkbox_set_text(casillaAhorro, "Modo ahorro");
-  lv_obj_set_style_text_font(casillaAhorro, &fuente_es_16, LV_PART_MAIN);
-  lv_obj_set_style_text_font(casillaAhorro, &lv_font_montserrat_14, LV_PART_INDICATOR); // símbolo ✓
-  lv_obj_set_style_border_color(casillaAhorro, lv_color_hex(COLOR_TEXTO_SECUNDARIO), LV_PART_INDICATOR);
-  lv_obj_set_style_bg_color(casillaAhorro, lv_color_hex(COLOR_ACTIVADO), LV_PART_INDICATOR | LV_STATE_CHECKED);
-  lv_obj_set_style_border_color(casillaAhorro, lv_color_hex(COLOR_ACTIVADO), LV_PART_INDICATOR | LV_STATE_CHECKED);
-  lv_obj_align(casillaAhorro, LV_ALIGN_TOP_MID, 0, 182);
-  lv_obj_add_event_cb(casillaAhorro, alCambiarAhorro, LV_EVENT_VALUE_CHANGED, NULL);
+  // Botones Auto y Ahorro, del mismo estilo (verdes y con ✓ cuando están activados).
+  botonAuto = crearBotonPastilla(pantallaBrillo, 88, 140, &etiquetaBotonAuto, alPulsarAuto);
+  botonAhorro = crearBotonPastilla(pantallaBrillo, 108, 178, &etiquetaBotonAhorro, alPulsarAhorro);
 
   puntoActivoBrillo = crearPuntosDePagina(pantallaBrillo, 1);
   lv_obj_add_event_cb(pantallaBrillo, alHacerGesto, LV_EVENT_GESTURE, NULL);
@@ -645,14 +668,8 @@ static void refrescarControlesBrillo()
     lv_obj_remove_flag(botonMas, LV_OBJ_FLAG_HIDDEN);
   }
 
-  lv_label_set_text(etiquetaBotonAuto, automatico ? "Auto " LV_SYMBOL_OK : "Auto");
-  lv_obj_set_style_bg_color(botonAuto, lv_color_hex(automatico ? COLOR_ACTIVADO : COLOR_FONDO), 0);
-  lv_obj_set_style_border_color(botonAuto, lv_color_hex(automatico ? COLOR_ACTIVADO : COLOR_APAGADO), 0);
-
-  if (ajustes::modoAhorro())
-    lv_obj_add_state(casillaAhorro, LV_STATE_CHECKED);
-  else
-    lv_obj_remove_state(casillaAhorro, LV_STATE_CHECKED);
+  pintarBotonPastilla(botonAuto, etiquetaBotonAuto, "Auto", automatico);
+  pintarBotonPastilla(botonAhorro, etiquetaBotonAhorro, "Ahorro", ajustes::modoAhorro());
 
   if (modoNoche)
   {
@@ -673,6 +690,23 @@ void ui_refrescar_brillo(int brilloActual, bool deNoche)
   brilloMostrado = brilloActual;
   ui_establecer_modo_noche(deNoche);
   refrescarControlesBrillo();
+}
+
+// ------------------------------------------------------------------ pantalla de reinicio
+
+// Se ve un instante al cambiar el modo ahorro, antes de que la placa se reinicie.
+static void crearPantallaReinicio()
+{
+  pantallaReinicio = crearPantallaVacia();
+  lv_obj_t *titulo = crearEtiqueta(pantallaReinicio, &fuente_es_20, COLOR_TEXTO);
+  lv_label_set_text(titulo, "Modo ahorro");
+  lv_obj_align(titulo, LV_ALIGN_CENTER, 0, -18);
+  lv_obj_t *texto = crearEtiqueta(pantallaReinicio, &fuente_es_16, COLOR_TEXTO_SECUNDARIO);
+  lv_label_set_text(texto, "Reiniciando…");
+  lv_obj_align(texto, LV_ALIGN_CENTER, 0, 10);
+  lv_obj_t *nota = crearEtiqueta(pantallaReinicio, &fuente_es_16, COLOR_APAGADO);
+  lv_label_set_text(nota, "Vuelve a conectar\nen unos segundos");
+  lv_obj_align(nota, LV_ALIGN_CENTER, 0, 48);
 }
 
 // ------------------------------------------------------------------ pantalla de llegada
@@ -767,6 +801,7 @@ void ui_init(void (*alCambiarBrillo)())
   crearPantallaBrillo();
   crearPantallaLlegada();
   crearPantallaActualizacion();
+  crearPantallaReinicio();
   ui_actualizar_reloj(false, 0, 0, 0, 1, 1);
   lv_screen_load(pantallaReloj);
 }
@@ -1045,7 +1080,8 @@ void ui_establecer_modo_noche(bool activado)
   colorearTexto(etiquetaResumenViaje, colorFecha());
   colorearTexto(etiquetaTituloBrillo, colorSecundario());
   colorearTexto(etiquetaValorBrillo, colorTexto());
-  lv_obj_set_style_text_color(casillaAhorro, lv_color_hex(colorTexto()), LV_PART_MAIN);
+  colorearTexto(etiquetaBotonAhorro, colorTexto());
+  colorearTexto(etiquetaBotonAuto, colorTexto());
   colorearTexto(etiquetaHasLlegado, colorTexto());
   colorearTexto(etiquetaHoraLlegada, colorSecundario());
   for (lv_obj_t *punto : {puntoActivoReloj, puntoActivoNavegacion, puntoActivoBrillo})

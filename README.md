@@ -20,8 +20,9 @@ Android propia por Bluetooth LE.
 - **Pantalla de Brillo**: se abre deslizando a la izquierda desde el reloj o la navegación y
   se cierra deslizando a la derecha (o sola a los 10 s sin tocarla). Brillo **manual** con la
   rueda del borde o − / + (10–100 %), o **automático** según la hora (10 % de 22:00 a 7:00,
-  sube hasta el 100 % a las 9:00 y baja desde las 19:00, sin saltos). Casilla **Modo ahorro**
-  (CPU a 80 MHz, lo mínimo con Bluetooth). Los ajustes se guardan en la placa.
+  sube hasta el 100 % a las 9:00 y baja desde las 19:00, sin saltos). Botón **Ahorro**
+  (CPU a 80 MHz, lo mínimo con Bluetooth): al tocarlo la placa se reinicia en unos segundos para
+  aplicarlo, porque cambiar la CPU en marcha la colgaba. Los ajustes se guardan en la placa.
 - **Modo noche** de 22:00 a 7:00: los textos blancos pasan a ámbar suave.
 - **"Has llegado"**: al llegar al destino se muestra una bandera con la hora y el **resumen del
   viaje** ("24 min · 9,0 km", la distancia si se conoce) unos segundos

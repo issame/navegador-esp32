@@ -3,7 +3,7 @@
 // memoria de la placa (NVS) para que se conserven al apagarla:
 //   - brillo manual (10 … 100 %)
 //   - brillo automático según la hora
-//   - modo ahorro (CPU a 80 MHz)
+//   - modo ahorro (CPU a 80 MHz; se aplica al arrancar, ver cambiarModoAhorro)
 // También calcula el brillo automático y si es de noche (modo noche).
 
 #include <Arduino.h>
@@ -24,6 +24,9 @@ namespace ajustes
   // Cambian el ajuste, lo aplican y lo guardan.
   void cambiarBrilloManual(int porcentaje); // también desactiva el automático
   void cambiarBrilloAutomatico(bool activado);
+  // El modo ahorro solo se guarda: la velocidad de la CPU se fija al arrancar (en cargar()).
+  // Cambiarla en marcha, con el Bluetooth y la pantalla funcionando, colgaba la placa;
+  // por eso la interfaz reinicia la placa después de cambiarlo.
   void cambiarModoAhorro(bool activado);
 
   // Brillo que toca ahora mismo (manual, o automático según la hora si se conoce).

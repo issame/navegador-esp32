@@ -66,9 +66,9 @@ namespace ajustes
 
   void cambiarModoAhorro(bool activado)
   {
+    // Solo se guarda (ver ajustes.h): se aplicará en el próximo arranque.
     ahorro = activado;
     memoria.putBool(CLAVE_AHORRO, activado);
-    aplicarVelocidadCpu();
   }
 
   int brilloSegunHora(int hora, int minuto)
