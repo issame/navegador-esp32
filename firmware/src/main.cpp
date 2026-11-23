@@ -34,7 +34,6 @@ static const uint32_t LINEAS_POR_BUFFER = 40;
 static uint16_t bufferDibujo1[ANCHO_PANTALLA * LINEAS_POR_BUFFER];
 static uint16_t bufferDibujo2[ANCHO_PANTALLA * LINEAS_POR_BUFFER];
 
-static const uint32_t DURACION_ARRANQUE_MS = 2000;
 static const uint32_t INTERVALO_RELOJ_MS = 500;
 
 // A partir de esta distancia a la maniobra se avisa (arco naranja que parpadea).
@@ -415,15 +414,12 @@ void setup()
   pantalla.init();
   pantalla.initDMA();
   pantalla.startWrite();
-  // Aún no se sabe la hora: se arranca con el brillo manual guardado.
-  pantalla.setBrightness(ajustes::brilloManual() * 255 / 100);
-  arranque::dibujar(pantalla);
-  uint32_t inicioArranque = millis();
+  pantalla.setBrightness(0); // a oscuras hasta que empiece la animación
+  pantalla.fillScreen(TFT_BLACK);
 
-  // El Bluetooth arranca mientras se ve la pantalla de arranque. Primero se crea el
-  // servidor con el servicio de actualización; después ChronosESP32 añade el suyo al
-  // mismo servidor (NimBLE reutiliza el dispositivo y el servidor ya creados) y empieza
-  // a anunciarse con los dos.
+  // Bluetooth: primero se crea el servidor con el servicio de actualización; después
+  // ChronosESP32 añade el suyo al mismo servidor (NimBLE reutiliza el dispositivo y el
+  // servidor ya creados) y empieza a anunciarse con los dos.
   NimBLEDevice::init(NOMBRE_BLUETOOTH);
   ota::registrarServicio(NimBLEDevice::createServer());
   enlaceMovil.setConnectionCallback(alCambiarConexion);
@@ -432,17 +428,17 @@ void setup()
   enlaceMovil.begin();
   Serial.printf("BLE: %s\n", enlaceMovil.getAddress().c_str());
 
+  // Animación de arranque (≈2,4 s) con el brillo manual guardado (aún no se sabe la hora).
+  // Entre fotogramas se atiende el Bluetooth, así que el móvil ya puede ir conectando.
+  arranque::animar(pantalla, ajustes::brilloManual() * 255 / 100, []() { enlaceMovil.loop(); });
+
+  // La animación termina a oscuras: se prepara la interfaz, se dibuja entera y solo
+  // entonces se enciende la pantalla con el brillo que toca.
   iniciarLvgl();
   ui_init(aplicarBrilloYModoNoche);
   ui_mostrar_conexion(false);
+  lv_refr_now(NULL);
   aplicarBrilloYModoNoche();
-
-  // Completar los 2 s de la pantalla de arranque sin desatender el Bluetooth.
-  while (millis() - inicioArranque < DURACION_ARRANQUE_MS)
-  {
-    enlaceMovil.loop();
-    delay(10);
-  }
 }
 
 void loop()
